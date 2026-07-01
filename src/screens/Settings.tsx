@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react'
-import { Download, Upload, Trash2, Plus, Cloud, ChevronDown } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Download, Upload, Trash2, Plus, Cloud } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
@@ -8,25 +8,12 @@ import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
 import { Card, CardLabel, PageHeader, Button, inputCls } from '../components/ui'
 
-/** 접이식 섹션 */
-function Section({ title, desc, defaultOpen = false, children }: { title: string; desc?: string; defaultOpen?: boolean; children: ReactNode }) {
-  const [open, setOpen] = useState(defaultOpen)
-  return (
-    <div className="bg-surface border border-line rounded-[12px] mb-3 overflow-hidden">
-      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-canvas">
-        <div className="text-left">
-          <div className="font-bold text-[14px]">{title}</div>
-          {desc && <div className="text-[11px] text-sub mt-0.5">{desc}</div>}
-        </div>
-        <ChevronDown size={18} className={`text-sub transition-transform ${open ? 'rotate-180' : ''}`} />
-      </button>
-      {open && <div className="px-5 pb-5">{children}</div>}
-    </div>
-  )
-}
+type Tab = 'data' | 'account' | 'menu'
+const TABS: [Tab, string][] = [['data', '데이터·백업'], ['account', '사용자·잠금'], ['menu', '메뉴 표시']]
 
 export default function Settings() {
   const { profiles, profile, profileId, setProfileId } = useProfile()
+  const [tab, setTab] = useState<Tab>('data')
   const fileRef = useRef<HTMLInputElement>(null)
   const [msg, setMsg] = useState('')
   const [newName, setNewName] = useState('')
@@ -77,52 +64,68 @@ export default function Settings() {
     <div>
       <PageHeader title="설정" desc="계정·사용자·잠금·백업" />
 
-      {/* 클라우드 (주 기능, 항상 펼침) */}
-      <CloudSection />
-
-      <Section title="사용자 관리" desc="본인·동생 등 프로필 추가/이름변경/삭제" defaultOpen>
-        {profiles.map((p) => (
-          <div key={p.id} className="flex items-center gap-2 py-2 border-b border-line last:border-0">
-            <input defaultValue={p.name} onBlur={(e) => rename(p.id, e.target.value.trim() || p.name)} className={inputCls + ' flex-1'} />
-            <button onClick={() => removeProfile(p.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
-          </div>
+      <div className="flex bg-canvas rounded-[10px] p-1 mb-4 w-fit">
+        {TABS.map(([k, label]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-[8px] text-[13px] font-bold transition-colors ${tab === k ? 'bg-surface shadow-sm text-ink' : 'text-sub'}`}>{label}</button>
         ))}
-        <div className="flex gap-2 mt-3">
-          <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addProfile()} placeholder="새 사용자 이름" className={inputCls + ' flex-1'} />
-          <Button onClick={addProfile}><Plus size={15} className="inline -mt-0.5 mr-1" />추가</Button>
-        </div>
-      </Section>
+      </div>
 
-      <Section title="PIN 잠금" desc="이 프로필 열 때 PIN 요구 (가벼운 잠금)">
-        <PinBody />
-      </Section>
-
-      <Section title="메뉴 표시" desc="안 쓰는 메뉴 숨기기 (데이터는 유지)">
-        {HIDEABLE.map((m) => {
-          const on = !hidden.has(m.key)
-          return (
-            <div key={m.key} className="flex items-center justify-between py-2 border-b border-line last:border-0">
-              <span className="text-[13.5px] font-semibold">{m.label}</span>
-              <button onClick={() => toggleMenu(m.key)} className={`w-11 h-6 rounded-full relative transition-colors ${on ? 'bg-mint' : 'bg-line'}`}>
-                <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
-              </button>
+      {tab === 'data' && (
+        <>
+          <CloudSection />
+          <Card>
+            <CardLabel>💾 파일 백업 (오프라인·계정 없이)</CardLabel>
+            <p className="text-[12px] text-sub mb-3"><b className="text-ink">클라우드 동기화(위)</b>는 계정으로 여러 기기 자동 보관, <b className="text-ink">파일 백업</b>은 로그인 없이 내 파일(JSON)로 보관하는 방식이에요.</p>
+            <div className="flex gap-2">
+              <Button variant="line" onClick={exportJson}><Download size={15} className="inline -mt-0.5 mr-1.5" />내보내기</Button>
+              <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
+              <Button variant="line" onClick={() => fileRef.current?.click()}><Upload size={15} className="inline -mt-0.5 mr-1.5" />불러오기</Button>
             </div>
-          )
-        })}
-      </Section>
+            {msg && <div className="mt-3 text-[13px] bg-mint-l text-mint-d rounded-lg px-4 py-3">{msg}</div>}
+          </Card>
+        </>
+      )}
 
-      <Section title="파일 백업 (오프라인·계정 없이)" desc="클라우드 대신, 내 파일(JSON)로 직접 보관">
-        <p className="text-[12px] text-sub mb-3">
-          <b className="text-ink">클라우드 동기화(위)</b>는 계정으로 여러 기기에 자동 보관하고,
-          <b className="text-ink"> 파일 백업</b>은 로그인 없이 내 파일로 보관하는 방식이에요. 둘 다 써도 되고, 클라우드만 써도 됩니다.
-        </p>
-        <div className="flex gap-2">
-          <Button variant="line" onClick={exportJson}><Download size={15} className="inline -mt-0.5 mr-1.5" />내보내기</Button>
-          <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
-          <Button variant="line" onClick={() => fileRef.current?.click()}><Upload size={15} className="inline -mt-0.5 mr-1.5" />불러오기</Button>
-        </div>
-        {msg && <div className="mt-3 text-[13px] bg-mint-l text-mint-d rounded-lg px-4 py-3">{msg}</div>}
-      </Section>
+      {tab === 'account' && (
+        <>
+          <Card className="mb-3.5">
+            <CardLabel>👥 사용자 관리</CardLabel>
+            <p className="text-[12px] text-sub mb-2">본인·동생 등 프로필을 추가/이름변경/삭제해요.</p>
+            {profiles.map((p) => (
+              <div key={p.id} className="flex items-center gap-2 py-2 border-b border-line last:border-0">
+                <input defaultValue={p.name} onBlur={(e) => rename(p.id, e.target.value.trim() || p.name)} className={inputCls + ' flex-1'} />
+                <button onClick={() => removeProfile(p.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
+              </div>
+            ))}
+            <div className="flex gap-2 mt-3">
+              <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addProfile()} placeholder="새 사용자 이름" className={inputCls + ' flex-1'} />
+              <Button onClick={addProfile}><Plus size={15} className="inline -mt-0.5 mr-1" />추가</Button>
+            </div>
+          </Card>
+          <Card>
+            <CardLabel>🔒 PIN 잠금</CardLabel>
+            <PinBody />
+          </Card>
+        </>
+      )}
+
+      {tab === 'menu' && (
+        <Card>
+          <CardLabel>메뉴 표시</CardLabel>
+          <p className="text-[12px] text-sub mb-2">안 쓰는 메뉴는 꺼두면 사이드바에서 숨겨져요. <b>데이터는 유지</b>되고 다시 켜면 그대로 나와요. (프로필마다 따로)</p>
+          {HIDEABLE.map((m) => {
+            const on = !hidden.has(m.key)
+            return (
+              <div key={m.key} className="flex items-center justify-between py-2 border-b border-line last:border-0">
+                <span className="text-[13.5px] font-semibold">{m.label}</span>
+                <button onClick={() => toggleMenu(m.key)} className={`w-11 h-6 rounded-full relative transition-colors ${on ? 'bg-mint' : 'bg-line'}`}>
+                  <span className={`absolute top-0.5 w-5 h-5 bg-white rounded-full shadow transition-all ${on ? 'left-[22px]' : 'left-0.5'}`} />
+                </button>
+              </div>
+            )
+          })}
+        </Card>
+      )}
     </div>
   )
 }
@@ -152,7 +155,7 @@ function PinBody() {
 
   return (
     <div>
-      <p className="text-[12px] text-sub mb-3">잠그면 이 프로필로 들어올 때 PIN이 필요해요. <b>가벼운 잠금</b>이라 완벽한 보안은 아니에요(진짜 보안은 클라우드 계정).</p>
+      <p className="text-[12px] text-sub mb-3">잠그면 이 프로필로 들어올 때 PIN이 필요해요. <b>가벼운 잠금</b>이라 완벽한 보안은 아니에요.</p>
       {has ? (
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold text-mint-d">PIN 설정됨</span>
@@ -174,6 +177,7 @@ function PinBody() {
 function CloudSection() {
   const [email, setEmail] = useState('')
   const [pw, setPw] = useState('')
+  const [newPw, setNewPw] = useState('')
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [cloudAt, setCloudAt] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
@@ -195,7 +199,7 @@ function CloudSection() {
     const { data, error } = await supabase.auth.signUp({ email, password: pw })
     setBusy(false)
     if (error) return setMsg('회원가입 실패: ' + error.message)
-    setMsg(data.session ? '가입 & 로그인 완료.' : '가입됨! 이메일 인증이 필요할 수 있어요. 메일 확인 후 로그인하거나, Supabase에서 이메일 인증을 꺼도 돼요.')
+    setMsg(data.session ? '가입 & 로그인 완료.' : '가입됨! 인증 메일을 보냈어요. 메일의 링크를 눌러 인증한 뒤 로그인해 주세요.')
   }
   async function login() {
     setBusy(true)
@@ -204,6 +208,24 @@ function CloudSection() {
     setMsg(error ? '로그인 실패: ' + error.message : '로그인 완료.')
   }
   async function logout() { await supabase.auth.signOut(); setMsg('로그아웃했어요.') }
+  async function forgot() {
+    if (!email) return setMsg('이메일을 먼저 입력하세요.')
+    const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: window.location.origin + '/settings' })
+    setMsg(error ? '재설정 메일 실패: ' + error.message : '재설정 메일을 보냈어요. 메일 링크로 돌아와 새 비밀번호를 설정하세요.')
+  }
+  async function changePw() {
+    if (newPw.length < 6) return setMsg('새 비밀번호는 6자 이상으로.')
+    const { error } = await supabase.auth.updateUser({ password: newPw })
+    setNewPw('')
+    setMsg(error ? '변경 실패: ' + error.message : '비밀번호를 변경했어요.')
+  }
+  async function deleteCloud() {
+    if (!confirm('클라우드에 저장된 데이터를 삭제하고 로그아웃할까요? (이 기기의 로컬 데이터는 그대로 남아요)')) return
+    const { data: { user } } = await supabase.auth.getUser()
+    if (user) await supabase.from('backups').delete().eq('user_id', user.id)
+    await supabase.auth.signOut()
+    setMsg('클라우드 데이터를 삭제하고 로그아웃했어요.')
+  }
 
   async function upload() {
     setBusy(true)
@@ -229,18 +251,20 @@ function CloudSection() {
   }
 
   return (
-    <Card className="mb-3">
+    <Card className="mb-3.5">
       <CardLabel>☁️ 클라우드 동기화 (다기기)</CardLabel>
       {!userEmail ? (
         <>
-          <p className="text-[12px] text-sub mb-2">로그인하면 폰·PC에서 데이터를 올리고 받을 수 있어요. 비밀번호는 <b className="text-ink">암호화(bcrypt)</b>되어 저장돼 원문은 아무도 못 봐요.</p>
+          <p className="text-[12px] text-sub mb-2">로그인하면 폰·PC에서 데이터를 올리고 받을 수 있어요. 비밀번호는 <b className="text-ink">암호화(bcrypt)</b>되어 저장돼요.</p>
           <div className="flex gap-2 flex-wrap">
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="이메일" className={inputCls + ' flex-1 min-w-[140px]'} />
             <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="비밀번호(6자+)" className={inputCls + ' flex-1 min-w-[140px]'} />
           </div>
-          <div className="flex gap-2 mt-2">
+          <div className="flex gap-2 mt-2 items-center">
             <Button onClick={login} disabled={busy}>로그인</Button>
             <Button variant="line" onClick={signup} disabled={busy}>회원가입</Button>
+            <div className="flex-1" />
+            <button onClick={forgot} className="text-[12px] text-sub hover:text-ink underline">비밀번호를 잊으셨나요?</button>
           </div>
         </>
       ) : (
@@ -255,6 +279,15 @@ function CloudSection() {
           <div className="flex gap-2">
             <Button onClick={upload} disabled={busy}><Upload size={14} className="inline -mt-0.5 mr-1" />올리기(백업)</Button>
             <Button variant="line" onClick={download} disabled={busy}><Download size={14} className="inline -mt-0.5 mr-1" />받기(복원)</Button>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-line">
+            <div className="text-[12px] font-semibold text-sub mb-1.5">비밀번호 변경</div>
+            <div className="flex gap-2">
+              <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="새 비밀번호(6자+)" className={inputCls + ' flex-1'} />
+              <Button variant="line" onClick={changePw}>변경</Button>
+            </div>
+            <button onClick={deleteCloud} className="text-[12px] text-expense hover:underline mt-3">클라우드 데이터 삭제 · 로그아웃</button>
           </div>
         </>
       )}
