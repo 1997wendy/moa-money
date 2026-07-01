@@ -109,6 +109,14 @@ export default function Stats() {
   const fixed = useMemo(() => detectFixed(txs), [txs])
   const fixedTotal = fixed.reduce((s, f) => s + f.monthly, 0)
 
+  // 이번달 / 지난달 / 작년 같은 달 비교
+  const cmp = [
+    { label: '이번 달', ...monthNet(txs, month) },
+    { label: '지난 달', ...monthNet(txs, addMonth(month, -1)) },
+    { label: '작년 같은 달', ...monthNet(txs, addMonth(month, -12)) },
+  ]
+  const pctVs = (cur: number, base: number) => (base > 0 ? ((cur - base) / base) * 100 : null)
+
   return (
     <div>
       <PageHeader title="통계·목표" desc="자산 흐름·증감률·목표 도달 예측" />
@@ -138,6 +146,35 @@ export default function Stats() {
           <div className="text-[12px] text-sub">수입 대비 저축 비율</div>
         </Card>
       </div>
+
+      {/* 이번달 / 지난달 / 작년 같은 달 비교 */}
+      <Card className="mt-3.5">
+        <CardLabel>기간 비교 (이번 달 · 지난 달 · 작년 같은 달)</CardLabel>
+        <table className="w-full text-[12.5px] mt-1">
+          <thead><tr className="text-sub text-left border-b border-line">
+            <th className="py-1.5">구분</th>
+            {cmp.map((c) => <th key={c.label} className="text-right">{c.label}</th>)}
+          </tr></thead>
+          <tbody>
+            {([['지출', 'expense'], ['수입', 'income'], ['순수익', 'net']] as const).map(([label, key]) => (
+              <tr key={key} className="border-b border-line last:border-0">
+                <td className="py-2 font-semibold">{label}</td>
+                {cmp.map((c, i) => {
+                  const v = c[key]
+                  const p = i === 0 ? pctVs(v, cmp[1][key]) : null
+                  const color = key === 'expense' ? 'text-expense' : key === 'income' ? 'text-income' : v >= 0 ? 'text-mint-d' : 'text-expense'
+                  return (
+                    <td key={i} className={`text-right tnum ${i === 0 ? 'font-bold ' + color : 'text-sub'}`}>
+                      {won(v)}
+                      {i === 0 && p != null && <div className="text-[10px] font-normal text-sub">지난달비 {p >= 0 ? '+' : ''}{p.toFixed(0)}%</div>}
+                    </td>
+                  )
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </Card>
 
       {/* 목표 */}
       <Card className="mt-3.5">

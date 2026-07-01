@@ -1,12 +1,12 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChevronLeft, ChevronRight, Upload } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Upload, Search } from 'lucide-react'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
 import { adviceFor } from '../lib/cardAdvisor'
-import { Card, CardLabel, PageHeader, Empty, Fab } from '../components/ui'
+import { Card, CardLabel, PageHeader, Empty, Fab, inputCls } from '../components/ui'
 import TransactionModal from '../components/TransactionModal'
 import type { Transaction } from '../db/types'
 
@@ -17,6 +17,7 @@ export default function Ledger() {
   const [month, setMonth] = useState(thisMonth())
   const [view, setView] = useState<View>('all')
   const [cat, setCat] = useState('전체')
+  const [search, setSearch] = useState('')
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Transaction | undefined>()
 
@@ -45,14 +46,19 @@ export default function Ledger() {
     return Object.entries(map).sort((a, b) => b[1] - a[1])
   }, [txs])
 
-  // 목록 필터
+  // 목록 필터 (+ 검색)
   const list = useMemo(() => {
     let rows = txs
     if (view === 'expense') rows = rows.filter((t) => t.type === 'expense')
     if (view === 'income') rows = rows.filter((t) => t.type === 'income')
     if (view === 'expense' && cat !== '전체') rows = rows.filter((t) => t.splits.some((s) => s.category === cat))
+    const q = search.trim().toLowerCase()
+    if (q) rows = rows.filter((t) =>
+      t.merchant.toLowerCase().includes(q) ||
+      (t.memo ?? '').toLowerCase().includes(q) ||
+      t.splits.some((s) => s.category.toLowerCase().includes(q)))
     return rows
-  }, [txs, view, cat])
+  }, [txs, view, cat, search])
 
   function openAdd() { setEdit(undefined); setModal(true) }
   function openEdit(t: Transaction) { setEdit(t); setModal(true) }
@@ -72,17 +78,20 @@ export default function Ledger() {
         <button onClick={() => setMonth(addMonth(month, 1))} className="p-1.5 rounded-lg hover:bg-line/60 text-sub"><ChevronRight size={18} /></button>
       </div>
 
-      {/* 모아보기 토글 */}
-      <div className="flex bg-canvas rounded-[10px] p-1 mb-4 w-fit">
-        {([['all', '전체'], ['expense', '지출'], ['income', '수입']] as [View, string][]).map(([v, label]) => (
-          <button
-            key={v}
-            onClick={() => { setView(v); setCat('전체') }}
-            className={`px-4 py-1.5 rounded-[8px] text-[13px] font-bold transition-colors ${view === v ? 'bg-surface shadow-sm text-ink' : 'text-sub'}`}
-          >
-            {label}
-          </button>
-        ))}
+      {/* 모아보기 토글 + 검색 */}
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <div className="flex bg-canvas rounded-[10px] p-1 w-fit">
+          {([['all', '전체'], ['expense', '지출'], ['income', '수입']] as [View, string][]).map(([v, label]) => (
+            <button key={v} onClick={() => { setView(v); setCat('전체') }} className={`px-4 py-1.5 rounded-[8px] text-[13px] font-bold transition-colors ${view === v ? 'bg-surface shadow-sm text-ink' : 'text-sub'}`}>
+              {label}
+            </button>
+          ))}
+        </div>
+        <div className="relative flex-1 min-w-[160px]">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-sub" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="가맹점·메모·카테고리 검색" className={inputCls + ' pl-9'} />
+          {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-sub hover:text-ink text-[16px]">×</button>}
+        </div>
       </div>
 
       {/* 합계 */}
