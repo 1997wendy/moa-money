@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, Trash2, Plus, Lock, Cloud } from 'lucide-react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Download, Upload, Trash2, Plus, Cloud, ChevronDown } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
@@ -7,6 +7,23 @@ import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
 import { Card, CardLabel, PageHeader, Button, inputCls } from '../components/ui'
+
+/** 접이식 섹션 */
+function Section({ title, desc, defaultOpen = false, children }: { title: string; desc?: string; defaultOpen?: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="bg-surface border border-line rounded-[12px] mb-3 overflow-hidden">
+      <button onClick={() => setOpen(!open)} className="w-full flex items-center justify-between px-5 py-3.5 hover:bg-canvas">
+        <div className="text-left">
+          <div className="font-bold text-[14px]">{title}</div>
+          {desc && <div className="text-[11px] text-sub mt-0.5">{desc}</div>}
+        </div>
+        <ChevronDown size={18} className={`text-sub transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
+      {open && <div className="px-5 pb-5">{children}</div>}
+    </div>
+  )
+}
 
 export default function Settings() {
   const { profiles, profile, profileId, setProfileId } = useProfile()
@@ -21,7 +38,6 @@ export default function Settings() {
     next.has(key) ? next.delete(key) : next.add(key)
     await repo.upsertProfile({ ...profile, hiddenMenus: Array.from(next) })
   }
-
   async function addProfile() {
     if (!newName.trim()) return
     const order = Math.max(-1, ...profiles.map((p) => p.order)) + 1
@@ -38,7 +54,6 @@ export default function Settings() {
     await repo.deleteProfileCascade(id)
     if (profileId === id) setProfileId(profiles.find((p) => p.id !== id)!.id)
   }
-
   async function exportJson() {
     const data = await repo.exportAll()
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
@@ -60,18 +75,15 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader title="설정" desc="클라우드 · 사용자 · 잠금 · 메뉴 · 백업" />
+      <PageHeader title="설정" desc="계정·사용자·잠금·백업" />
 
-      {/* 클라우드 동기화 */}
+      {/* 클라우드 (주 기능, 항상 펼침) */}
       <CloudSection />
 
-      {/* 사용자 관리 */}
-      <Card>
-        <CardLabel>사용자 관리</CardLabel>
+      <Section title="사용자 관리" desc="본인·동생 등 프로필 추가/이름변경/삭제" defaultOpen>
         {profiles.map((p) => (
           <div key={p.id} className="flex items-center gap-2 py-2 border-b border-line last:border-0">
             <input defaultValue={p.name} onBlur={(e) => rename(p.id, e.target.value.trim() || p.name)} className={inputCls + ' flex-1'} />
-            {p.pinHash && <span title="PIN 잠금" className="text-mint-d"><Lock size={15} /></span>}
             <button onClick={() => removeProfile(p.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
           </div>
         ))}
@@ -79,15 +91,13 @@ export default function Settings() {
           <input value={newName} onChange={(e) => setNewName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && addProfile()} placeholder="새 사용자 이름" className={inputCls + ' flex-1'} />
           <Button onClick={addProfile}><Plus size={15} className="inline -mt-0.5 mr-1" />추가</Button>
         </div>
-      </Card>
+      </Section>
 
-      {/* PIN 잠금 */}
-      <PinSection />
+      <Section title="PIN 잠금" desc="이 프로필 열 때 PIN 요구 (가벼운 잠금)">
+        <PinBody />
+      </Section>
 
-      {/* 메뉴 표시 */}
-      <Card className="mt-3.5">
-        <CardLabel>메뉴 표시</CardLabel>
-        <p className="text-[12px] text-sub mb-2">안 쓰는 메뉴는 꺼두면 사이드바에서 숨겨져요. <b>데이터는 유지</b>되고 다시 켜면 그대로 나와요. (프로필마다 따로)</p>
+      <Section title="메뉴 표시" desc="안 쓰는 메뉴 숨기기 (데이터는 유지)">
         {HIDEABLE.map((m) => {
           const on = !hidden.has(m.key)
           return (
@@ -99,24 +109,25 @@ export default function Settings() {
             </div>
           )
         })}
-      </Card>
+      </Section>
 
-      {/* 데이터 백업 */}
-      <Card className="mt-3.5">
-        <CardLabel>데이터 백업</CardLabel>
-        <p className="text-[13px] text-sub mb-3">로컬 저장이라, 가끔 백업 파일로 내보내 두세요.</p>
+      <Section title="파일 백업 (오프라인·계정 없이)" desc="클라우드 대신, 내 파일(JSON)로 직접 보관">
+        <p className="text-[12px] text-sub mb-3">
+          <b className="text-ink">클라우드 동기화(위)</b>는 계정으로 여러 기기에 자동 보관하고,
+          <b className="text-ink"> 파일 백업</b>은 로그인 없이 내 파일로 보관하는 방식이에요. 둘 다 써도 되고, 클라우드만 써도 됩니다.
+        </p>
         <div className="flex gap-2">
-          <Button onClick={exportJson}><Download size={15} className="inline -mt-0.5 mr-1.5" />내보내기</Button>
+          <Button variant="line" onClick={exportJson}><Download size={15} className="inline -mt-0.5 mr-1.5" />내보내기</Button>
           <input ref={fileRef} type="file" accept="application/json,.json" className="hidden" onChange={(e) => e.target.files?.[0] && importJson(e.target.files[0])} />
           <Button variant="line" onClick={() => fileRef.current?.click()}><Upload size={15} className="inline -mt-0.5 mr-1.5" />불러오기</Button>
         </div>
         {msg && <div className="mt-3 text-[13px] bg-mint-l text-mint-d rounded-lg px-4 py-3">{msg}</div>}
-      </Card>
+      </Section>
     </div>
   )
 }
 
-function PinSection() {
+function PinBody() {
   const { profile } = useProfile()
   const [pin, setPin] = useState('')
   const [pin2, setPin2] = useState('')
@@ -140,12 +151,8 @@ function PinSection() {
   }
 
   return (
-    <Card className="mt-3.5">
-      <CardLabel>🔒 PIN 잠금</CardLabel>
-      <p className="text-[12px] text-sub mb-3">
-        잠그면 이 프로필로 들어올 때 PIN이 필요해요 (다른 사람이 내 정보 못 보게).
-        <b> 단, 가벼운 잠금이라 완벽한 보안은 아니에요</b> — 진짜 보안은 클라우드 단계에서.
-      </p>
+    <div>
+      <p className="text-[12px] text-sub mb-3">잠그면 이 프로필로 들어올 때 PIN이 필요해요. <b>가벼운 잠금</b>이라 완벽한 보안은 아니에요(진짜 보안은 클라우드 계정).</p>
       {has ? (
         <div className="flex items-center gap-2">
           <span className="text-[13px] font-semibold text-mint-d">PIN 설정됨</span>
@@ -160,7 +167,7 @@ function PinSection() {
         </div>
       )}
       {msg && <div className="text-[12px] text-sub mt-2">{msg}</div>}
-    </Card>
+    </div>
   )
 }
 
@@ -188,7 +195,7 @@ function CloudSection() {
     const { data, error } = await supabase.auth.signUp({ email, password: pw })
     setBusy(false)
     if (error) return setMsg('회원가입 실패: ' + error.message)
-    setMsg(data.session ? '가입 & 로그인 완료.' : '가입됨! 이메일 인증이 필요할 수 있어요. 메일 확인 후 로그인하거나, Supabase Auth 설정에서 이메일 인증을 꺼도 돼요.')
+    setMsg(data.session ? '가입 & 로그인 완료.' : '가입됨! 이메일 인증이 필요할 수 있어요. 메일 확인 후 로그인하거나, Supabase에서 이메일 인증을 꺼도 돼요.')
   }
   async function login() {
     setBusy(true)
@@ -222,11 +229,11 @@ function CloudSection() {
   }
 
   return (
-    <Card className="mb-3.5">
+    <Card className="mb-3">
       <CardLabel>☁️ 클라우드 동기화 (다기기)</CardLabel>
       {!userEmail ? (
         <>
-          <p className="text-[12px] text-sub mb-2">로그인하면 폰·PC에서 데이터를 올리고 받을 수 있어요. (처음이면 회원가입)</p>
+          <p className="text-[12px] text-sub mb-2">로그인하면 폰·PC에서 데이터를 올리고 받을 수 있어요. 비밀번호는 <b className="text-ink">암호화(bcrypt)</b>되어 저장돼 원문은 아무도 못 봐요.</p>
           <div className="flex gap-2 flex-wrap">
             <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="이메일" className={inputCls + ' flex-1 min-w-[140px]'} />
             <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="비밀번호(6자+)" className={inputCls + ' flex-1 min-w-[140px]'} />
