@@ -25,7 +25,7 @@ export interface Asset {
   fxRate?: number // 외화 1단위 → 원화 환율
   institution?: string // 은행/증권사
   market?: 'kr' | 'us' // 주식/ETF 국내(kr)/해외(us)
-  targetPrice?: number // 내가 정한 목표가 (참고)
+  avgPrice?: number // 평단가 (수익률 계산용)
   quantity?: number // 투자자산 보유 수량
   unitPrice?: number // 단가
   ticker?: string // 종목 코드
@@ -133,6 +133,16 @@ export interface RecurringReceivable {
   dayOfMonth: number
   direction?: 'in' | 'out' // in=받을돈(기본) / out=줄돈
   paidMonths?: string[] // 정산 완료한 월 목록 (yyyy-mm)
+}
+
+/** 투자 코칭 기록 (날짜별 히스토리) */
+export interface CoachNote {
+  id: ID
+  profileId: ID
+  date: string // yyyy-mm-dd
+  createdAt: string
+  content: string
+  source: 'rule' | 'ai' // 규칙기반 / AI(클라우드+AI 단계)
 }
 
 /** 카테고리 (필터·합계 기준) */

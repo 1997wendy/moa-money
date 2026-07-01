@@ -8,6 +8,7 @@ import type {
   Asset,
   Card,
   Category,
+  CoachNote,
   Goal,
   ID,
   Person,
@@ -110,22 +111,30 @@ export const repo = {
   upsertCategory: (c: Category) => db.categories.put(c),
   deleteCategory: (id: ID) => db.categories.delete(id),
 
+  // ---- Coach notes (투자 코칭 히스토리) ----
+  async listCoachNotes(profileId: ID): Promise<CoachNote[]> {
+    const rows = await db.coachNotes.where('profileId').equals(profileId).toArray()
+    return rows.sort((a, b) => (a.createdAt < b.createdAt ? 1 : -1))
+  },
+  upsertCoachNote: (n: CoachNote) => db.coachNotes.put(n),
+  deleteCoachNote: (id: ID) => db.coachNotes.delete(id),
+
   // ---- 백업 (전체 내보내기/불러오기) ----
   async exportAll() {
-    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories] =
+    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes] =
       await Promise.all([
         db.profiles.toArray(), db.assets.toArray(), db.transactions.toArray(),
         db.schedules.toArray(), db.cards.toArray(), db.goals.toArray(),
-        db.people.toArray(), db.recurring.toArray(), db.categories.toArray(),
+        db.people.toArray(), db.recurring.toArray(), db.categories.toArray(), db.coachNotes.toArray(),
       ])
     return {
-      app: 'money-app', version: 1, exportedAt: new Date().toISOString(),
-      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories,
+      app: 'money-app', version: 2, exportedAt: new Date().toISOString(),
+      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes,
     }
   },
   async importAll(data: Record<string, unknown>) {
     const arr = <T,>(key: string): T[] => (Array.isArray(data[key]) ? (data[key] as T[]) : [])
-    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories]
+    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories, db.coachNotes]
     await db.transaction('rw', tables, async () => {
       await Promise.all(tables.map((t) => t.clear()))
       await db.profiles.bulkPut(arr<Profile>('profiles'))
@@ -137,6 +146,7 @@ export const repo = {
       await db.people.bulkPut(arr<Person>('people'))
       await db.recurring.bulkPut(arr<RecurringReceivable>('recurring'))
       await db.categories.bulkPut(arr<Category>('categories'))
+      await db.coachNotes.bulkPut(arr<CoachNote>('coachNotes'))
     })
   },
 }
