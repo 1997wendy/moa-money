@@ -9,6 +9,7 @@ import Receivables from './screens/Receivables'
 import Stats from './screens/Stats'
 import Cards from './screens/Cards'
 import Settings from './screens/Settings'
+import Import from './screens/Import'
 
 const router = createBrowserRouter([
   {
@@ -17,6 +18,7 @@ const router = createBrowserRouter([
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'ledger', element: <Ledger /> },
+      { path: 'import', element: <Import /> },
       { path: 'assets', element: <Assets /> },
       { path: 'calendar', element: <Calendar /> },
       { path: 'receivables', element: <Receivables /> },

@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react'
+import { Link } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Upload } from 'lucide-react'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
@@ -58,7 +59,11 @@ export default function Ledger() {
 
   return (
     <div>
-      <PageHeader title="가계부" desc="모아보고, 카테고리로 나눠보고, 합계를 봐요" />
+      <PageHeader
+        title="가계부"
+        desc="모아보고, 카테고리로 나눠보고, 합계를 봐요"
+        right={<Link to="/import" className="text-[13px] font-bold text-mint-d border border-line rounded-[10px] px-3 py-2 hover:bg-canvas flex items-center gap-1.5"><Upload size={14} />가져오기</Link>}
+      />
 
       {/* 월 이동 */}
       <div className="flex items-center gap-2 mb-4">
