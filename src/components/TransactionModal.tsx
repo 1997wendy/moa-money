@@ -88,18 +88,24 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, edit, cats.length])
 
-  // 분할 금액 자동계산: total 이 있으면 마지막 빈칸 = total - 나머지 합
-  const resolved = useMemo(() => {
-    const nonNullSum = splits.reduce((s, x) => s + (x.amount ?? 0), 0)
-    const nullIdxs = splits.map((x, i) => (x.amount == null ? i : -1)).filter((i) => i >= 0)
-    const lastNull = nullIdxs[nullIdxs.length - 1]
-    const remaining = total != null ? total - nonNullSum : 0
-    return splits.map((s, i) =>
-      s.amount != null ? s.amount : i === lastNull && total != null ? Math.max(0, remaining) : null,
-    )
-  }, [splits, total])
+  // 분할 금액 자동계산: total 이 있으면 "마지막 빈칸" = total - 나머지 합 (초과 시 음수)
+  const nonNullSum = splits.reduce((s, x) => s + (x.amount ?? 0), 0)
+  const nullIdxs = splits.map((x, i) => (x.amount == null ? i : -1)).filter((i) => i >= 0)
+  const lastNull = nullIdxs[nullIdxs.length - 1]
+  const autoIdx = total != null && nullIdxs.length > 0 ? lastNull : -1 // 자동 계산되는 칸
+  const remaining = total != null ? total - nonNullSum : 0
+  const resolved = splits.map((s, i) =>
+    s.amount != null ? s.amount : i === autoIdx ? remaining : null,
+  )
 
   const computedTotal = total ?? splits.reduce((s, x) => s + (x.amount ?? 0), 0)
+
+  // 카테고리 선택지 (항상 '기타/기타수입' 포함)
+  const fallbackCat = type === 'income' ? '기타수입' : '기타'
+  const catOptions = [
+    ...usableCats.map((c) => c.name),
+    ...(usableCats.some((c) => c.name === fallbackCat) ? [] : [fallbackCat]),
+  ]
 
   const setSplit = (id: string, patch: Partial<DraftSplit>) =>
     setSplits((prev) => prev.map((s) => (s.id === id ? { ...s, ...patch } : s)))
@@ -192,8 +198,8 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
         <div className="grid grid-cols-2 gap-3">
           <Field label="카테고리">
             <select value={incomeCat} onChange={(e) => setIncomeCat(e.target.value)} className={inputCls}>
-              {usableCats.map((c) => (
-                <option key={c.id} value={c.name}>{c.name}</option>
+              {catOptions.map((c) => (
+                <option key={c} value={c}>{c}</option>
               ))}
             </select>
           </Field>
@@ -219,45 +225,63 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
 
           {splits.map((s, i) => (
             <div key={s.id} className="border border-line rounded-[10px] p-2.5 mb-2">
-              <div className="flex gap-2">
+              <div className="flex gap-2 items-start">
                 <select value={s.category} onChange={(e) => setSplit(s.id, { category: e.target.value })} className={inputCls + ' flex-1'}>
-                  {usableCats.map((c) => (
-                    <option key={c.id} value={c.name}>{c.name}</option>
+                  {catOptions.map((c) => (
+                    <option key={c} value={c}>{c}</option>
                   ))}
                 </select>
-                <div className="w-[120px]">
-                  <AmountInput
-                    value={resolved[i]}
-                    onChange={(v) => setSplit(s.id, { amount: v })}
-                    placeholder="금액"
-                  />
-                </div>
+                {i === autoIdx ? (
+                  <div className={inputCls + ' w-[120px] text-right tnum bg-canvas relative flex items-center justify-end'}>
+                    <span className="absolute left-1.5 text-[9px] font-bold text-mint-d bg-mint-l px-1 rounded">자동</span>
+                    <span className={remaining < 0 ? 'text-expense' : ''}>{won(remaining)}</span>
+                  </div>
+                ) : (
+                  <div className="w-[120px]">
+                    <AmountInput value={resolved[i]} onChange={(v) => setSplit(s.id, { amount: v })} placeholder="금액" />
+                  </div>
+                )}
                 {splits.length > 1 && (
-                  <button onClick={() => removeSplit(s.id)} className="text-sub hover:text-expense px-1">
+                  <button onClick={() => removeSplit(s.id)} className="text-sub hover:text-expense px-1 py-2">
                     <Trash2 size={16} />
                   </button>
                 )}
               </div>
               {people.length > 0 && (
-                <div className="mt-2 flex items-center gap-2">
-                  <select value={s.owedBy} onChange={(e) => setSplit(s.id, { owedBy: e.target.value })} className={inputCls + ' flex-1 py-1.5'}>
+                <div className="mt-2">
+                  <select value={s.owedBy} onChange={(e) => setSplit(s.id, { owedBy: e.target.value })} className={inputCls + ' w-full py-1.5'}>
                     <option value="">정산 없음 (내 지출)</option>
                     {people.map((p) => (
-                      <option key={p.id} value={p.id}>{p.name}</option>
+                      <option key={p.id} value={p.id}>{p.name}와 정산</option>
                     ))}
                   </select>
                   {s.owedBy && (
-                    <select value={s.owedDir} onChange={(e) => setSplit(s.id, { owedDir: e.target.value as 'in' | 'out' })} className={inputCls + ' w-[92px] py-1.5'}>
-                      <option value="in">받을돈</option>
-                      <option value="out">줄돈</option>
-                    </select>
+                    <div className="flex gap-1.5 mt-1.5">
+                      {(['in', 'out'] as const).map((d) => (
+                        <button
+                          key={d}
+                          onClick={() => setSplit(s.id, { owedDir: d })}
+                          className={`px-3 py-1 rounded-lg text-[12px] font-bold border transition-colors ${
+                            s.owedDir === d
+                              ? d === 'out'
+                                ? 'bg-income text-white border-income'
+                                : 'bg-[#c77700] text-white border-[#c77700]'
+                              : 'bg-surface text-sub border-line'
+                          }`}
+                        >
+                          {d === 'in' ? '받을돈' : '줄돈'}
+                        </button>
+                      ))}
+                    </div>
                   )}
                 </div>
               )}
             </div>
           ))}
 
-          <div className="text-right text-[13px] font-bold mb-3 tnum">합계 -₩{won(computedTotal)}</div>
+          <div className={`text-right text-[13px] font-bold mb-3 tnum ${remaining < 0 && total != null ? 'text-expense' : ''}`}>
+            합계 -₩{won(computedTotal)}{remaining < 0 && total != null ? ' · 분할 합이 전체금액을 초과!' : ''}
+          </div>
         </>
       )}
 

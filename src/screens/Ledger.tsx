@@ -106,29 +106,33 @@ export default function Ledger() {
         ) : (
           list.map((t) => {
             const isSplit = t.splits.length > 1
-            const owedDir = t.splits.find((s) => s.owedBy)?.owedDir ?? 'in'
-            const hasOwed = t.splits.some((s) => s.owedBy)
+            const hasIn = t.splits.some((s) => s.owedBy && (s.owedDir ?? 'in') === 'in')
+            const hasOut = t.splits.some((s) => s.owedBy && s.owedDir === 'out')
+            const myCost = t.type === 'expense' ? t.splits.filter((s) => !s.owedBy).reduce((a, s) => a + s.amount, 0) : t.amount
+            const hasOwed = hasIn || hasOut
             return (
               <div key={t.id} onClick={() => openEdit(t)} className="py-3 border-b border-line last:border-0 cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition-colors">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between gap-2">
                   <div className="min-w-0">
-                    <div className="flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="text-[14px] font-semibold">{t.merchant}</span>
                       {!isSplit && <span className="text-[11px] px-2 py-0.5 rounded-full bg-canvas text-sub">{t.splits[0].category}</span>}
                       {isSplit && <span className="text-[11px] px-2 py-0.5 rounded-full bg-mint-l text-mint-d font-bold">N분 {t.splits.length}건</span>}
-                      {hasOwed && (
-                        <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${owedDir === 'out' ? 'bg-[#e7f0ff] text-income' : 'bg-[#fff1e0] text-[#c77700]'}`}>
-                          {owedDir === 'out' ? '줄돈' : '받을돈'}
-                        </span>
-                      )}
+                      {hasIn && <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-[#fff1e0] text-[#c77700]">받을돈</span>}
+                      {hasOut && <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-[#e7f0ff] text-income">줄돈</span>}
                     </div>
                     <div className="text-[11px] text-sub mt-0.5">
-                      {t.date.slice(5).replace('-', '/')}{t.method ? ` · ${t.method}` : ''}{t.memo ? ` · ${t.memo}` : ''}
+                      {t.date.slice(5).replace('-', '/')}{t.method ? ` · ${t.method}` : ''}
                     </div>
                   </div>
-                  <span className={`text-[15px] font-bold tnum shrink-0 ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>
-                    {t.type === 'income' ? '+' : '-'}{won(t.amount)}
-                  </span>
+                  <div className="text-right shrink-0">
+                    <div className={`text-[15px] font-bold tnum ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>
+                      {t.type === 'income' ? '+' : '-'}{won(t.amount)}
+                    </div>
+                    {t.type === 'expense' && hasOwed && (
+                      <div className="text-[11px] text-sub tnum">내 부담 {won(myCost)}</div>
+                    )}
+                  </div>
                 </div>
 
                 {isSplit && (
@@ -136,13 +140,17 @@ export default function Ledger() {
                     {t.splits.map((s) => (
                       <div key={s.id} className="flex items-center justify-between text-[12px]">
                         <span className="text-sub">
-                          {s.category}{s.note ? ` · ${s.note}` : ''}
+                          {s.category}
                           {s.owedBy && <span className={s.owedDir === 'out' ? 'text-income font-semibold' : 'text-[#c77700] font-semibold'}> · {personName(s.owedBy)} {s.owedDir === 'out' ? '줄돈' : '받을돈'}</span>}
                         </span>
                         <span className="tnum">{won(s.amount)}</span>
                       </div>
                     ))}
                   </div>
+                )}
+
+                {t.memo && (
+                  <div className="mt-2 text-[12px] text-sub bg-canvas rounded-lg px-3 py-1.5">📝 {t.memo}</div>
                 )}
 
                 {t.betterCardNote && (
