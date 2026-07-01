@@ -109,7 +109,6 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [loadingFx, setLoadingFx] = useState(false)
 
   const sub = subOf(type)
-  const curGroup = sub.group
   const isStockEtf = sub.key === 'stock' || sub.key === 'etf'
 
   useEffect(() => {
@@ -128,11 +127,6 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const instList = sub.inst === 'bank' ? BANKS : sub.inst === 'securities' ? SECURITIES : null
   const foreign = currency !== 'KRW'
   const krwPreview = foreign && amount && Number(fxRate) ? Math.round(amount * Number(fxRate)) : null
-
-  function pickGroup(gk: string) {
-    const first = SUBTYPES.find((s) => s.group === gk)
-    if (first) { setType(first.key); setInst(''); setInstCustom(false) }
-  }
 
   async function autoFx() {
     setLoadingFx(true)
@@ -163,16 +157,11 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
 
   return (
     <Modal open={open} onClose={onClose} title={edit ? '자산 수정' : '자산 추가'}>
-      {/* 분류: 그룹 칩 → 세부 칩 (셀렉트 대신) */}
+      {/* 분류: 평평한 칩 하나로 (탭 한 번) */}
       <div className="mb-3">
         <span className="text-[12px] font-semibold text-sub">분류</span>
         <div className="flex gap-1.5 flex-wrap mt-1.5">
-          {GROUPS.map((g) => (
-            <button key={g.key} onClick={() => pickGroup(g.key)} className={`px-2.5 py-1.5 rounded-full text-[12.5px] font-bold border ${curGroup === g.key ? 'bg-ink text-white border-ink' : 'bg-surface text-sub border-line'}`}>{g.emoji} {g.label}</button>
-          ))}
-        </div>
-        <div className="flex gap-1.5 flex-wrap mt-2">
-          {SUBTYPES.filter((s) => s.group === curGroup).map((s) => (
+          {SUBTYPES.map((s) => (
             <button key={s.key} onClick={() => { setType(s.key); setInst(''); setInstCustom(false) }} className={`px-2.5 py-1.5 rounded-full text-[12.5px] font-semibold border ${type === s.key ? 'bg-mint text-white border-mint' : 'bg-canvas text-sub border-line'}`}>{s.label}</button>
           ))}
         </div>

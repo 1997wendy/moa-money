@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Save, Trash2 } from 'lucide-react'
-import { repo, uid } from '../db/repository'
+import { History, Trash2 } from 'lucide-react'
+import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
 import { won, signed, thisMonth, addMonth, todayISO } from '../lib/format'
 import { groupOf, krwValue } from '../lib/assets'
 import { detectFixed } from '../lib/fixedCost'
-import { Card, CardLabel, PageHeader, Button, Empty, inputCls } from '../components/ui'
+import { Card, CardLabel, PageHeader, Button, Empty, Modal, inputCls } from '../components/ui'
 import type { Asset, CoachNote, Transaction } from '../db/types'
 
 const BUCKETS = [
@@ -47,6 +47,7 @@ export default function Investment() {
   const notes = useLiveQuery(() => (profileId ? repo.listCoachNotes(profileId) : []), [profileId], [])
   const [alloc, setAlloc] = useState<Record<string, number>>(DEFAULT_ALLOC)
   const [msg, setMsg] = useState('')
+  const [histOpen, setHistOpen] = useState(false)
 
   useEffect(() => { setAlloc(profile?.targetAlloc ?? DEFAULT_ALLOC) }, [profile?.id, profile?.targetAlloc])
 
@@ -74,7 +75,10 @@ export default function Investment() {
       : thisNet > avgNet * 1.2 ? '이번 달은 평소보다 여유가 있어, 여력의 일부를 더 담아도 괜찮아요.'
         : ''
 
-  // 규칙 기반 코칭 문장
+  // 버킷 내 최대 보유 종목
+  const topInBucket = (bkey: string) => assets.filter((a) => bucketOf(a) === bkey).sort((x, y) => krwValue(y) - krwValue(x))[0]
+
+  // 규칙 기반 코칭 문장 (종목 언급)
   const coachLines = useMemo(() => {
     const L: string[] = []
     if (capacity > 0) {
@@ -82,23 +86,39 @@ export default function Investment() {
     } else {
       L.push('최근 순수익이 마이너스예요. 신규 매수보다 지출 점검·현금 확보를 먼저 권해요.')
     }
-    if (underInv.length) L.push('더 담기(부족): ' + underInv.map((d) => `${d.label} +₩${won(d.diff)}`).join(' · '))
-    else L.push('목표 비중은 대체로 충족 상태예요. 목표를 높이거나 적립식으로 유지하세요.')
-    if (overInv.length) L.push('덜기 검토(초과·매도 후보): ' + overInv.map((d) => `${d.label} ₩${won(d.diff)}`).join(' · '))
+    if (underInv.length) {
+      const d = underInv[0]
+      const buy = topInBucket(d.key)
+      L.push(`더 담기: 부족한 ${d.label}에 약 +₩${won(d.diff)}${buy ? ` (예: ${buy.name})` : ''}.`)
+      if (underInv.length > 1) L.push('그다음: ' + underInv.slice(1).map((x) => `${x.label} +₩${won(x.diff)}`).join(' · '))
+    } else {
+      L.push('목표 비중은 대체로 충족 상태예요. 목표를 높이거나 적립식으로 유지하세요.')
+    }
+    if (overInv.length) {
+      const d = overInv[0]
+      const a = topInBucket(d.key)
+      const roi = a?.unitPrice && a?.avgPrice ? ((a.unitPrice - a.avgPrice) / a.avgPrice) * 100 : null
+      const roiTxt = roi != null ? ` (현재 ${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%)` : ''
+      const redeploy = underInv[0] ? ` → 그 자금으로 ${underInv[0].label} 매수 검토` : ''
+      L.push(`덜기: ${a ? a.name : d.label}${roiTxt} 약 ₩${won(-d.diff)} 매도 검토${redeploy}.`)
+    }
     if (fixedTotal > 0) L.push(`고정지출 ₩${won(fixedTotal)}/월을 감안해 여력을 잡았어요.`)
     if (dynamic) L.push(dynamic)
     return L
-  }, [capacity, avgNet, underInv, overInv, fixedTotal, dynamic])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [capacity, avgNet, underInv, overInv, fixedTotal, dynamic, assets])
+
+  // 하루 1건 자동 저장(오늘 것은 최신 내용으로 갱신)
+  const today = todayISO()
+  useEffect(() => {
+    if (!profileId || total === 0) return
+    repo.upsertCoachNote({ id: `coach-${profileId}-${today}`, profileId, date: today, createdAt: new Date().toISOString(), content: coachLines.join('\n'), source: 'rule' })
+  }, [profileId, today, total, coachLines])
 
   async function saveAlloc() {
     if (!profile) return
     await repo.upsertProfile({ ...profile, targetAlloc: alloc })
     setMsg('목표 비중을 저장했어요.')
-  }
-  async function saveCoach() {
-    const note: CoachNote = { id: uid(), profileId, date: todayISO(), createdAt: new Date().toISOString(), content: coachLines.join('\n'), source: 'rule' }
-    await repo.upsertCoachNote(note)
-    setMsg('오늘 코칭을 기록에 저장했어요.')
   }
   async function setAvg(a: Asset, v: number | undefined) { await repo.upsertAsset({ ...a, avgPrice: v }) }
 
@@ -156,8 +176,8 @@ export default function Investment() {
       {/* 코칭 */}
       <Card className="mt-3.5">
         <div className="flex items-center justify-between mb-1">
-          <CardLabel>💡 투자 코칭 (오늘)</CardLabel>
-          <button onClick={saveCoach} className="text-[12px] font-bold text-mint-d flex items-center gap-1 border border-line rounded-lg px-2.5 py-1.5 hover:bg-canvas"><Save size={13} /> 기록 저장</button>
+          <CardLabel>💡 투자 코칭 (오늘 · 자동 저장됨)</CardLabel>
+          <button onClick={() => setHistOpen(true)} className="text-[12px] font-bold text-mint-d flex items-center gap-1 border border-line rounded-lg px-2.5 py-1.5 hover:bg-canvas"><History size={13} /> 기록 보기</button>
         </div>
         <ul className="space-y-1.5">
           {coachLines.map((l, i) => <li key={i} className="text-[13px] flex gap-2"><span className="text-mint-d">•</span><span>{l}</span></li>)}
@@ -167,21 +187,7 @@ export default function Investment() {
         </div>
       </Card>
 
-      {/* 코칭 히스토리 */}
-      {notes.length > 0 && (
-        <Card className="mt-3.5">
-          <CardLabel>📜 코칭 기록</CardLabel>
-          {notes.map((n) => (
-            <div key={n.id} className="py-2.5 border-b border-line last:border-0">
-              <div className="flex items-center justify-between">
-                <span className="text-[12px] font-bold text-sub">{n.date} {n.source === 'ai' ? '· AI' : ''}</span>
-                <button onClick={() => repo.deleteCoachNote(n.id)} className="text-sub hover:text-expense"><Trash2 size={14} /></button>
-              </div>
-              <div className="text-[12.5px] whitespace-pre-line mt-1">{n.content}</div>
-            </div>
-          ))}
-        </Card>
-      )}
+      <CoachHistoryModal open={histOpen} onClose={() => setHistOpen(false)} notes={notes} />
 
       {/* 보유 종목 & 수익률 */}
       <Card className="mt-3.5">
@@ -209,5 +215,28 @@ export default function Investment() {
 
       {msg && <div className="mt-4 text-[13px] bg-mint-l text-mint-d rounded-lg px-4 py-3">{msg}</div>}
     </div>
+  )
+}
+
+function CoachHistoryModal({ open, onClose, notes }: { open: boolean; onClose: () => void; notes: CoachNote[] }) {
+  const [q, setQ] = useState('')
+  const filtered = notes.filter((n) => !q || n.date.includes(q) || n.content.includes(q))
+  return (
+    <Modal open={open} onClose={onClose} title={`코칭 기록 (${notes.length}건)`}>
+      <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="날짜(예: 2026-07) 또는 내용 검색" className={inputCls + ' mb-3'} />
+      {filtered.length === 0 ? (
+        <div className="text-center text-sub text-[13px] py-6">기록이 없어요.</div>
+      ) : (
+        filtered.map((n) => (
+          <div key={n.id} className="py-2.5 border-b border-line last:border-0">
+            <div className="flex items-center justify-between">
+              <span className="text-[12px] font-bold text-sub">{n.date}{n.source === 'ai' ? ' · AI' : ''}</span>
+              <button onClick={() => repo.deleteCoachNote(n.id)} className="text-sub hover:text-expense"><Trash2 size={14} /></button>
+            </div>
+            <div className="text-[12.5px] whitespace-pre-line mt-1">{n.content}</div>
+          </div>
+        ))
+      )}
+    </Modal>
   )
 }
