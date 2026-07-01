@@ -82,7 +82,7 @@ export default function Settings() {
 
       {/* 메뉴 표시 */}
       <Card className="mt-3.5">
-        <CardLabel>메뉴 표시 ({profile?.name})</CardLabel>
+        <CardLabel>메뉴 표시</CardLabel>
         <p className="text-[12px] text-sub mb-2">안 쓰는 메뉴는 꺼두면 사이드바에서 숨겨져요. <b>데이터는 유지</b>되고 다시 켜면 그대로 나와요. (프로필마다 따로)</p>
         {HIDEABLE.map((m) => {
           const on = !hidden.has(m.key)
@@ -137,7 +137,7 @@ function PinSection() {
 
   return (
     <Card className="mt-3.5">
-      <CardLabel>🔒 PIN 잠금 ({profile?.name})</CardLabel>
+      <CardLabel>🔒 PIN 잠금</CardLabel>
       <p className="text-[12px] text-sub mb-3">
         잠그면 이 프로필로 들어올 때 PIN이 필요해요 (다른 사람이 내 정보 못 보게).
         <b> 단, 가벼운 잠금이라 완벽한 보안은 아니에요</b> — 진짜 보안은 클라우드 단계에서.

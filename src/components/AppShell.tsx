@@ -2,7 +2,7 @@
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
-  LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock,
+  LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock, LineChart,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useProfile } from '../state/profile'
@@ -17,6 +17,7 @@ export const HIDEABLE: { key: string; label: string }[] = [
   { key: 'assets', label: '자산' },
   { key: 'calendar', label: '캘린더' },
   { key: 'stats', label: '통계·목표' },
+  { key: 'invest', label: '투자' },
   { key: 'cards', label: '카드혜택' },
 ]
 
@@ -35,6 +36,7 @@ const GROUPS: Group[] = [
     title: '분석',
     items: [
       { key: 'stats', to: '/stats', label: '통계·목표', icon: TrendingUp, hideable: true },
+      { key: 'invest', to: '/invest', label: '투자', icon: LineChart, hideable: true },
       { key: 'cards', to: '/cards', label: '카드혜택', icon: CreditCard, hideable: true },
     ],
   },

@@ -10,6 +10,7 @@ import Stats from './screens/Stats'
 import Cards from './screens/Cards'
 import Settings from './screens/Settings'
 import Import from './screens/Import'
+import Investment from './screens/Investment'
 
 const router = createBrowserRouter([
   {
@@ -23,6 +24,7 @@ const router = createBrowserRouter([
       { path: 'calendar', element: <Calendar /> },
       { path: 'receivables', element: <Receivables /> },
       { path: 'stats', element: <Stats /> },
+      { path: 'invest', element: <Investment /> },
       { path: 'cards', element: <Cards /> },
       { path: 'settings', element: <Settings /> },
     ],
