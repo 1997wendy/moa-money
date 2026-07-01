@@ -1,7 +1,8 @@
-import { useRef, useState } from 'react'
-import { Download, Upload, Trash2, Plus, Lock } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
+import { Download, Upload, Trash2, Plus, Lock, Cloud } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
+import { supabase } from '../lib/supabase'
 import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
@@ -59,7 +60,10 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader title="설정" desc="사용자 · 잠금 · 메뉴 · 데이터 백업" />
+      <PageHeader title="설정" desc="클라우드 · 사용자 · 잠금 · 메뉴 · 백업" />
+
+      {/* 클라우드 동기화 */}
+      <CloudSection />
 
       {/* 사용자 관리 */}
       <Card>
@@ -156,6 +160,98 @@ function PinSection() {
         </div>
       )}
       {msg && <div className="text-[12px] text-sub mt-2">{msg}</div>}
+    </Card>
+  )
+}
+
+function CloudSection() {
+  const [email, setEmail] = useState('')
+  const [pw, setPw] = useState('')
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+  const [cloudAt, setCloudAt] = useState<string | null>(null)
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  useEffect(() => {
+    supabase.auth.getSession().then(({ data }) => setUserEmail(data.session?.user?.email ?? null))
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => setUserEmail(session?.user?.email ?? null))
+    return () => sub.subscription.unsubscribe()
+  }, [])
+
+  useEffect(() => {
+    if (!userEmail) { setCloudAt(null); return }
+    supabase.from('backups').select('updated_at').maybeSingle().then(({ data }) => setCloudAt((data as { updated_at?: string } | null)?.updated_at ?? null))
+  }, [userEmail, msg])
+
+  async function signup() {
+    setBusy(true)
+    const { data, error } = await supabase.auth.signUp({ email, password: pw })
+    setBusy(false)
+    if (error) return setMsg('회원가입 실패: ' + error.message)
+    setMsg(data.session ? '가입 & 로그인 완료.' : '가입됨! 이메일 인증이 필요할 수 있어요. 메일 확인 후 로그인하거나, Supabase Auth 설정에서 이메일 인증을 꺼도 돼요.')
+  }
+  async function login() {
+    setBusy(true)
+    const { error } = await supabase.auth.signInWithPassword({ email, password: pw })
+    setBusy(false)
+    setMsg(error ? '로그인 실패: ' + error.message : '로그인 완료.')
+  }
+  async function logout() { await supabase.auth.signOut(); setMsg('로그아웃했어요.') }
+
+  async function upload() {
+    setBusy(true)
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      if (!user) return
+      const payload = await repo.exportAll()
+      const { error } = await supabase.from('backups').upsert({ user_id: user.id, data: payload, updated_at: new Date().toISOString() })
+      setMsg(error ? '업로드 실패: ' + error.message : '☁️ 클라우드에 올렸어요.')
+    } finally { setBusy(false) }
+  }
+  async function download() {
+    if (!confirm('클라우드 데이터로 이 기기를 덮어씁니다. 계속할까요?')) return
+    setBusy(true)
+    try {
+      const { data, error } = await supabase.from('backups').select('data').maybeSingle()
+      if (error) return setMsg('다운로드 실패: ' + error.message)
+      if (!data) return setMsg('클라우드에 저장된 데이터가 없어요. 먼저 올리기를 하세요.')
+      await repo.importAll((data as { data: Record<string, unknown> }).data)
+      setMsg('받았어요. 새로고침할게요…')
+      setTimeout(() => location.reload(), 800)
+    } finally { setBusy(false) }
+  }
+
+  return (
+    <Card className="mb-3.5">
+      <CardLabel>☁️ 클라우드 동기화 (다기기)</CardLabel>
+      {!userEmail ? (
+        <>
+          <p className="text-[12px] text-sub mb-2">로그인하면 폰·PC에서 데이터를 올리고 받을 수 있어요. (처음이면 회원가입)</p>
+          <div className="flex gap-2 flex-wrap">
+            <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="이메일" className={inputCls + ' flex-1 min-w-[140px]'} />
+            <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="비밀번호(6자+)" className={inputCls + ' flex-1 min-w-[140px]'} />
+          </div>
+          <div className="flex gap-2 mt-2">
+            <Button onClick={login} disabled={busy}>로그인</Button>
+            <Button variant="line" onClick={signup} disabled={busy}>회원가입</Button>
+          </div>
+        </>
+      ) : (
+        <>
+          <div className="flex items-center gap-2 mb-2">
+            <Cloud size={16} className="text-mint-d" />
+            <span className="text-[13px] font-semibold">{userEmail}</span>
+            <div className="flex-1" />
+            <button onClick={logout} className="text-[12px] text-sub hover:text-ink">로그아웃</button>
+          </div>
+          <div className="text-[12px] text-sub mb-2">클라우드 최신 저장: {cloudAt ? new Date(cloudAt).toLocaleString('ko-KR') : '없음'}</div>
+          <div className="flex gap-2">
+            <Button onClick={upload} disabled={busy}><Upload size={14} className="inline -mt-0.5 mr-1" />올리기(백업)</Button>
+            <Button variant="line" onClick={download} disabled={busy}><Download size={14} className="inline -mt-0.5 mr-1" />받기(복원)</Button>
+          </div>
+        </>
+      )}
+      {msg && <div className="mt-3 text-[12.5px] bg-mint-l text-mint-d rounded-lg px-3 py-2">{msg}</div>}
     </Card>
   )
 }
