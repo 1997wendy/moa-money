@@ -8,6 +8,7 @@ import Calendar from './screens/Calendar'
 import Receivables from './screens/Receivables'
 import Stats from './screens/Stats'
 import Cards from './screens/Cards'
+import DataBackup from './screens/DataBackup'
 
 const router = createBrowserRouter([
   {
@@ -21,6 +22,7 @@ const router = createBrowserRouter([
       { path: 'receivables', element: <Receivables /> },
       { path: 'stats', element: <Stats /> },
       { path: 'cards', element: <Cards /> },
+      { path: 'data', element: <DataBackup /> },
     ],
   },
 ])

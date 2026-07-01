@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Plus } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, thisMonth, monthLabel } from '../lib/format'
-import { Card as Box, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls } from '../components/ui'
+import { Card as Box, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
+import AmountInput from '../components/AmountInput'
 import type { Card } from '../db/types'
 
 export default function Cards() {
@@ -26,11 +26,7 @@ export default function Cards() {
 
   return (
     <div>
-      <PageHeader
-        title="카드혜택"
-        desc={`${monthLabel(month)} 실적·한도 진행률 · 규칙은 직접 입력`}
-        right={<Button onClick={() => { setEdit(undefined); setModal(true) }}><Plus size={15} className="inline -mt-0.5 mr-1" />카드 추가</Button>}
-      />
+      <PageHeader title="카드혜택" desc={`${monthLabel(month)} 실적·한도 진행률 · 규칙은 직접 입력`} />
 
       {cards.length === 0 && <Empty>카드가 없어요. ‘카드 추가’로 혜택 규칙을 입력하세요.</Empty>}
 
@@ -97,6 +93,7 @@ export default function Cards() {
         <p className="text-[12px] text-sub mt-2">※ 총급여·카드 종류(신용/체크)를 입력하면 정확한 최적 결제 추천을 계산할 수 있어요. (다음 단계)</p>
       </Box>
 
+      <Fab onClick={() => { setEdit(undefined); setModal(true) }} label="카드 추가" />
       <CardModal open={modal} onClose={() => setModal(false)} edit={edit} profileId={profileId} />
     </div>
   )
@@ -104,21 +101,21 @@ export default function Cards() {
 
 function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Card; profileId: string }) {
   const [name, setName] = useState('')
-  const [req, setReq] = useState('')
-  const [cap, setCap] = useState('')
+  const [req, setReq] = useState<number | null>(null)
+  const [cap, setCap] = useState<number | null>(null)
   const [rate, setRate] = useState('')
   const [area, setArea] = useState('')
   useEffect(() => {
     if (!open) return
-    if (edit) { setName(edit.name); setReq(String(edit.requiredSpend ?? '')); setCap(String(edit.benefitCap ?? '')); setRate(String(edit.rate ?? '')); setArea(edit.area ?? '') }
-    else { setName(''); setReq(''); setCap(''); setRate(''); setArea('') }
+    if (edit) { setName(edit.name); setReq(edit.requiredSpend ?? null); setCap(edit.benefitCap ?? null); setRate(String(edit.rate ?? '')); setArea(edit.area ?? '') }
+    else { setName(''); setReq(null); setCap(null); setRate(''); setArea('') }
   }, [open, edit])
 
   async function save() {
     if (!name.trim()) return
     const c: Card = {
       id: edit?.id ?? uid(), profileId, name: name.trim(),
-      requiredSpend: Number(req) || undefined, benefitCap: Number(cap) || undefined,
+      requiredSpend: req || undefined, benefitCap: cap || undefined,
       rate: Number(rate) || undefined, area: area.trim() || undefined, cycle: 'prev-month',
     }
     await repo.upsertCard(c)
@@ -129,8 +126,8 @@ function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose:
     <Modal open={open} onClose={onClose} title={edit ? '카드 수정' : '카드 추가'}>
       <Field label="카드 이름"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 국민 이지카드" className={inputCls} /></Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="실적 조건 (원)"><input type="number" value={req} onChange={(e) => setReq(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>
-        <Field label="월 혜택 한도 (원)"><input type="number" value={cap} onChange={(e) => setCap(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>
+        <Field label="월 실적 조건 (원)"><AmountInput value={req} onChange={setReq} /></Field>
+        <Field label="월 혜택 한도 (원)"><AmountInput value={cap} onChange={setCap} /></Field>
         <Field label="적립·할인율 (%)"><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>
         <Field label="혜택 영역"><input value={area} onChange={(e) => setArea(e.target.value)} placeholder="배달/카페 등" className={inputCls} /></Field>
       </div>

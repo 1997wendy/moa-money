@@ -26,13 +26,14 @@ export interface Asset {
 
 export type TxType = 'income' | 'expense'
 
-/** 한 거래 안의 분할 내역 (N분 결제·카테고리 쪼개기·받을돈) */
+/** 한 거래 안의 분할 내역 (N분 결제·카테고리 쪼개기·정산) */
 export interface Split {
   id: ID
   category: string
   amount: number
-  owedBy?: ID | null // 받을돈 대상 personId (있으면 정산 목록에 노출)
-  settled?: boolean // 수령 완료 여부
+  owedBy?: ID | null // 정산 상대 personId (있으면 정산 목록에 노출)
+  owedDir?: 'in' | 'out' // in=받을돈(기본) / out=줄돈
+  settled?: boolean // 정산 완료 여부
   settledAt?: string | null
   note?: string
 }
@@ -53,16 +54,19 @@ export interface Transaction {
   createdAt: string
 }
 
+export type RepeatKind = 'none' | 'daily' | 'weekly' | 'monthly' | 'yearly'
 /** 일정 */
 export interface Schedule {
   id: ID
   profileId: ID
-  date: string // yyyy-mm-dd
+  date: string // yyyy-mm-dd (반복이면 시작일)
   time?: string // HH:mm
   title: string
   memo?: string
   source: 'manual' | 'external'
-  color?: string
+  color?: string // 색상 키 (colors.ts)
+  repeat?: RepeatKind
+  repeatUntil?: string // yyyy-mm-dd (선택)
 }
 
 /** 카드 (혜택·실적 규칙) */
@@ -97,7 +101,7 @@ export interface Person {
   kind: PersonKind
 }
 
-/** 매달 반복해서 받을 돈 (엄마 관리비·보험 등) */
+/** 매달 반복 정산 (엄마 관리비·보험 등) */
 export interface RecurringReceivable {
   id: ID
   profileId: ID
@@ -105,6 +109,8 @@ export interface RecurringReceivable {
   label: string
   amount: number
   dayOfMonth: number
+  direction?: 'in' | 'out' // in=받을돈(기본) / out=줄돈
+  paidMonths?: string[] // 정산 완료한 월 목록 (yyyy-mm)
 }
 
 /** 카테고리 (필터·합계 기준) */

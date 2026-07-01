@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Plus } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won } from '../lib/format'
-import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls } from '../components/ui'
+import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
+import AmountInput from '../components/AmountInput'
 import type { Asset, AssetType } from '../db/types'
 
 const TYPES: { key: AssetType; label: string; emoji: string; color: string }[] = [
@@ -30,11 +30,7 @@ export default function Assets() {
 
   return (
     <div>
-      <PageHeader
-        title="자산"
-        desc="계좌·증권·코인 통합 · 수동 입력(추후 시세 자동 갱신)"
-        right={<Button onClick={() => { setEdit(undefined); setModal(true) }}><Plus size={15} className="inline -mt-0.5 mr-1" />자산 추가</Button>}
-      />
+      <PageHeader title="자산" desc="계좌·증권·코인 통합 · 수동 입력(추후 시세 자동 갱신)" />
 
       <Card>
         <CardLabel>자산 구성 · 총 ₩{won(total)}</CardLabel>
@@ -84,6 +80,7 @@ export default function Assets() {
         ))}
       </div>
 
+      <Fab onClick={() => { setEdit(undefined); setModal(true) }} label="자산 추가" />
       <AssetModal open={modal} onClose={() => setModal(false)} edit={edit} profileId={profileId} />
     </div>
   )
@@ -92,17 +89,17 @@ export default function Assets() {
 function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Asset; profileId: string }) {
   const [type, setType] = useState<AssetType>('account')
   const [name, setName] = useState('')
-  const [amount, setAmount] = useState('')
+  const [amount, setAmount] = useState<number | null>(null)
   const [quantity, setQuantity] = useState('')
   const [ticker, setTicker] = useState('')
 
   useEffect(() => {
     if (!open) return
     if (edit) {
-      setType(edit.type); setName(edit.name); setAmount(String(edit.amount))
+      setType(edit.type); setName(edit.name); setAmount(edit.amount)
       setQuantity(edit.quantity != null ? String(edit.quantity) : ''); setTicker(edit.ticker ?? '')
     } else {
-      setType('account'); setName(''); setAmount(''); setQuantity(''); setTicker('')
+      setType('account'); setName(''); setAmount(null); setQuantity(''); setTicker('')
     }
   }, [open, edit])
 
@@ -115,9 +112,9 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       profileId,
       type,
       name: name.trim(),
-      amount: Number(amount),
+      amount: amount!,
       quantity: quantity ? Number(quantity) : undefined,
-      unitPrice: quantity && Number(quantity) > 0 ? Number(amount) / Number(quantity) : undefined,
+      unitPrice: quantity && Number(quantity) > 0 ? amount! / Number(quantity) : undefined,
       ticker: ticker.trim() || undefined,
       updatedAt: new Date().toISOString(),
     }
@@ -133,7 +130,7 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
         </select>
       </Field>
       <Field label="이름"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 국민은행 입출금" className={inputCls} /></Field>
-      <Field label="평가금액 (원)"><input type="number" inputMode="numeric" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>
+      <Field label="평가금액 (원)"><AmountInput value={amount} onChange={setAmount} /></Field>
       {investKind && (
         <div className="grid grid-cols-2 gap-3">
           <Field label="보유 수량"><input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>

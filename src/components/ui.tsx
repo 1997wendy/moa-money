@@ -1,7 +1,7 @@
 // 미니멀 톤 공통 UI 조각
 import type { ReactNode } from 'react'
 import { useEffect } from 'react'
-import { X } from 'lucide-react'
+import { X, Plus } from 'lucide-react'
 
 export function Card({
   children,
@@ -132,5 +132,19 @@ export const inputCls =
 export function Empty({ children }: { children: ReactNode }) {
   return (
     <div className="text-center text-sub text-[13px] py-10">{children}</div>
+  )
+}
+
+/** 우측 하단 고정 ＋ 버튼 (전 페이지 공통) */
+export function Fab({ onClick, label }: { onClick: () => void; label: string }) {
+  return (
+    <button
+      onClick={onClick}
+      aria-label={label}
+      title={label}
+      className="fixed bottom-7 right-7 z-40 h-14 w-14 rounded-full bg-mint text-white shadow-lg flex items-center justify-center hover:bg-mint-d transition-colors"
+    >
+      <Plus size={26} />
+    </button>
   )
 }

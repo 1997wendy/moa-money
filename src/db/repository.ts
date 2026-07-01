@@ -91,6 +91,36 @@ export const repo = {
     db.categories.where('profileId').equals(profileId).sortBy('order'),
   upsertCategory: (c: Category) => db.categories.put(c),
   deleteCategory: (id: ID) => db.categories.delete(id),
+
+  // ---- 백업 (전체 내보내기/불러오기) ----
+  async exportAll() {
+    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories] =
+      await Promise.all([
+        db.profiles.toArray(), db.assets.toArray(), db.transactions.toArray(),
+        db.schedules.toArray(), db.cards.toArray(), db.goals.toArray(),
+        db.people.toArray(), db.recurring.toArray(), db.categories.toArray(),
+      ])
+    return {
+      app: 'money-app', version: 1, exportedAt: new Date().toISOString(),
+      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories,
+    }
+  },
+  async importAll(data: Record<string, unknown>) {
+    const arr = <T,>(key: string): T[] => (Array.isArray(data[key]) ? (data[key] as T[]) : [])
+    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories]
+    await db.transaction('rw', tables, async () => {
+      await Promise.all(tables.map((t) => t.clear()))
+      await db.profiles.bulkPut(arr<Profile>('profiles'))
+      await db.assets.bulkPut(arr<Asset>('assets'))
+      await db.transactions.bulkPut(arr<Transaction>('transactions'))
+      await db.schedules.bulkPut(arr<Schedule>('schedules'))
+      await db.cards.bulkPut(arr<Card>('cards'))
+      await db.goals.bulkPut(arr<Goal>('goals'))
+      await db.people.bulkPut(arr<Person>('people'))
+      await db.recurring.bulkPut(arr<RecurringReceivable>('recurring'))
+      await db.categories.bulkPut(arr<Category>('categories'))
+    })
+  },
 }
 
 export type Repo = typeof repo

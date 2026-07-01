@@ -14,8 +14,14 @@ export const compact = (n: number): string => {
   return won(n)
 }
 
-export const todayISO = (): string => new Date().toISOString().slice(0, 10)
-export const thisMonth = (): string => new Date().toISOString().slice(0, 7)
+const pad = (n: number): string => String(n).padStart(2, '0')
+
+/** 로컬(한국시간) 기준 오늘 yyyy-mm-dd — UTC로 밀리지 않게 직접 조합 */
+export const todayISO = (): string => {
+  const d = new Date()
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}
+export const thisMonth = (): string => todayISO().slice(0, 7)
 
 /** yyyy-mm → 'YYYY년 M월' */
 export const monthLabel = (ym: string): string => {
@@ -23,8 +29,9 @@ export const monthLabel = (ym: string): string => {
   return `${y}년 ${Number(m)}월`
 }
 
+/** 월 더하기/빼기 — 순수 산술로 계산(타임존 영향 없음) */
 export const addMonth = (ym: string, delta: number): string => {
   const [y, m] = ym.split('-').map(Number)
-  const d = new Date(y, m - 1 + delta, 1)
-  return d.toISOString().slice(0, 7)
+  const total = y * 12 + (m - 1) + delta
+  return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}`
 }

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { Plus } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, compact, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
-import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls } from '../components/ui'
+import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
+import AmountInput from '../components/AmountInput'
 import type { Goal } from '../db/types'
 
 export default function Stats() {
@@ -54,11 +54,7 @@ export default function Stats() {
 
   return (
     <div>
-      <PageHeader
-        title="통계·목표"
-        desc="자산 흐름과 목표 도달 예측"
-        right={<Button onClick={() => setModal(true)}><Plus size={15} className="inline -mt-0.5 mr-1" />목표 추가</Button>}
-      />
+      <PageHeader title="통계·목표" desc="자산 흐름과 목표 도달 예측" />
 
       {/* 목표 */}
       <Card>
@@ -81,11 +77,6 @@ export default function Stats() {
           </div>
         ) : (
           <Empty>목표를 추가하면 도달 예측을 보여드려요.</Empty>
-        )}
-        {goals.length > 1 && (
-          <div className="mt-3 pt-3 border-t border-line text-[11.5px] text-sub">
-            📸 목표 스냅샷: {goals.slice().sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? -1 : 1)).map((g) => `${g.effectiveFrom}~ ${compact(g.targetAmount)}`).join('  →  ')}
-          </div>
         )}
       </Card>
 
@@ -133,6 +124,7 @@ export default function Stats() {
         )}
       </Card>
 
+      <Fab onClick={() => setModal(true)} label="목표 추가" />
       <GoalModal open={modal} onClose={() => setModal(false)} profileId={profileId} defaultFrom={month} />
     </div>
   )
@@ -140,15 +132,15 @@ export default function Stats() {
 
 function GoalModal({ open, onClose, profileId, defaultFrom }: { open: boolean; onClose: () => void; profileId: string; defaultFrom: string }) {
   const [label, setLabel] = useState('')
-  const [amount, setAmount] = useState('')
+  const [amount, setAmount] = useState<number | null>(null)
   const [from, setFrom] = useState(defaultFrom)
   const [targetDate, setTargetDate] = useState('')
-  useEffect(() => { if (open) { setLabel(''); setAmount(''); setFrom(defaultFrom); setTargetDate('') } }, [open, defaultFrom])
+  useEffect(() => { if (open) { setLabel(''); setAmount(null); setFrom(defaultFrom); setTargetDate('') } }, [open, defaultFrom])
 
   async function save() {
     if (!(Number(amount) > 0)) return
     const g: Goal = {
-      id: uid(), profileId, targetAmount: Number(amount),
+      id: uid(), profileId, targetAmount: amount!,
       targetDate: targetDate || undefined, effectiveFrom: from,
       label: label.trim() || undefined, createdAt: new Date().toISOString(),
     }
@@ -160,7 +152,7 @@ function GoalModal({ open, onClose, profileId, defaultFrom }: { open: boolean; o
     <Modal open={open} onClose={onClose} title="목표 추가 (스냅샷)">
       <p className="text-[12px] text-sub mb-3">‘적용 시작월’부터 이 목표가 적용돼요. 이전 달은 이전 목표 기준으로 그대로 남습니다.</p>
       <Field label="목표 이름"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="예: 2억 만들기" className={inputCls} /></Field>
-      <Field label="목표 금액 (원)"><input type="number" value={amount} onChange={(e) => setAmount(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>
+      <Field label="목표 금액 (원)"><AmountInput value={amount} onChange={setAmount} /></Field>
       <div className="grid grid-cols-2 gap-3">
         <Field label="적용 시작월"><input type="month" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} /></Field>
         <Field label="목표 시점(선택)"><input type="month" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={inputCls} /></Field>

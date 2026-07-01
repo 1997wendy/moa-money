@@ -8,6 +8,7 @@ import {
   Receipt,
   TrendingUp,
   CreditCard,
+  Database,
 } from 'lucide-react'
 import { useProfile } from '../state/profile'
 
@@ -16,9 +17,10 @@ const nav = [
   { to: '/ledger', label: '가계부', icon: Notebook },
   { to: '/assets', label: '자산', icon: PieChart },
   { to: '/calendar', label: '캘린더', icon: Calendar },
-  { to: '/receivables', label: '받을돈 정산', icon: Receipt },
+  { to: '/receivables', label: '정산', icon: Receipt },
   { to: '/stats', label: '통계·목표', icon: TrendingUp },
   { to: '/cards', label: '카드혜택', icon: CreditCard },
+  { to: '/data', label: '데이터 백업', icon: Database },
 ]
 
 export default function AppShell() {

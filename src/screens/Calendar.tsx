@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
+import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { compact, thisMonth, monthLabel, addMonth } from '../lib/format'
-import { PageHeader, Button, Modal, Field, inputCls } from '../components/ui'
+import { PageHeader, Button, Modal, Field, inputCls, Fab } from '../components/ui'
 import type { Schedule } from '../db/types'
 
 export default function Calendar() {
@@ -48,11 +48,7 @@ export default function Calendar() {
 
   return (
     <div>
-      <PageHeader
-        title="캘린더"
-        desc="날짜별 수입·지출과 일정을 한눈에"
-        right={<Button onClick={() => addOn()}><Plus size={15} className="inline -mt-0.5 mr-1" />일정 추가</Button>}
-      />
+      <PageHeader title="캘린더" desc="날짜별 수입·지출과 일정을 한눈에" />
 
       <div className="flex items-center gap-2 mb-4">
         <button onClick={() => setMonth(addMonth(month, -1))} className="p-1.5 rounded-lg hover:bg-line/60 text-sub"><ChevronLeft size={18} /></button>
@@ -98,6 +94,7 @@ export default function Calendar() {
         </div>
       </div>
 
+      <Fab onClick={() => addOn()} label="일정 추가" />
       <ScheduleModal open={modal} onClose={() => setModal(false)} date={preset} profileId={profileId} />
     </div>
   )

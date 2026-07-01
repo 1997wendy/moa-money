@@ -36,12 +36,15 @@ export default function Dashboard() {
       })()
     : null
 
+  const today = new Date()
+  const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
   const upcoming = [...schedules]
-    .filter((s) => s.date >= new Date().toISOString().slice(0, 10))
-    .sort((a, b) => (a.date < b.date ? -1 : 1))
+    .filter((s) => s.date >= todayStr)
+    .sort((a, b) => (a.date === b.date ? (a.time ?? '') < (b.time ?? '') ? -1 : 1 : a.date < b.date ? -1 : 1))
     .slice(0, 4)
 
-  const recent = txs.slice(0, 5)
+  // 결제수단 유의 안내 (자동 계산된 회고가 있는 거래)
+  const alerts = txs.filter((t) => t.betterCardNote)
 
   return (
     <div>
@@ -98,7 +101,7 @@ export default function Dashboard() {
             upcoming.map((s) => (
               <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
                 <span className="text-[13.5px]">📅 {s.title}</span>
-                <span className="text-[12px] text-sub tnum">{s.date.slice(5).replace('-', '/')}</span>
+                <span className="text-[12px] text-sub tnum">{s.date.slice(5).replace('-', '/')}{s.time ? ` ${s.time}` : ''}</span>
               </div>
             ))
           )}
@@ -107,21 +110,19 @@ export default function Dashboard() {
 
       <Card className="mt-3.5">
         <div className="flex items-center justify-between mb-1">
-          <CardLabel>최근 거래</CardLabel>
-          <Link to="/ledger" className="text-[12px] text-mint-d font-bold">전체 보기 →</Link>
+          <CardLabel>⚠️ 결제수단 유의 안내</CardLabel>
+          <Link to="/ledger" className="text-[12px] text-mint-d font-bold">가계부 →</Link>
         </div>
-        {recent.length === 0 ? (
-          <Empty>이번 달 거래가 없어요.</Empty>
+        {alerts.length === 0 ? (
+          <Empty>잘못 쓴 결제수단이 없어요. 👍<br />(카드 혜택 규칙을 등록하면 더 정확히 알려드려요)</Empty>
         ) : (
-          recent.map((t) => (
-            <div key={t.id} className="flex items-center justify-between py-2.5 border-b border-line last:border-0">
-              <div>
+          alerts.map((t) => (
+            <div key={t.id} className="py-2.5 border-b border-line last:border-0">
+              <div className="flex items-center justify-between">
                 <span className="text-[13.5px] font-semibold">{t.merchant}</span>
-                <span className="text-[11px] text-sub ml-2">{t.splits.map((s) => s.category).join(', ')}</span>
+                <span className="text-[13px] font-bold tnum text-expense">-{won(t.amount)}</span>
               </div>
-              <span className={`text-[14px] font-bold tnum ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>
-                {t.type === 'income' ? '+' : '-'}{won(t.amount)}
-              </span>
+              <div className="text-[12px] text-[#c77700] mt-0.5">💡 {t.betterCardNote}</div>
             </div>
           ))
         )}
