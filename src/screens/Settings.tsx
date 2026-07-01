@@ -59,7 +59,7 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader title="설정" desc={`${profile?.name ?? ''} 프로필`} />
+      <PageHeader title="설정" desc="사용자 · 잠금 · 메뉴 · 데이터 백업" />
 
       {/* 사용자 관리 */}
       <Card>

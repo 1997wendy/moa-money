@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useProfile } from '../state/profile'
+import Logo from './Logo'
 
 interface Item { key: string; to: string; label: string; icon: LucideIcon; end?: boolean; hideable?: boolean }
 interface Group { title?: string; items: Item[] }
@@ -48,7 +49,7 @@ export default function AppShell() {
     <div className="flex min-h-full">
       <aside className="w-[212px] shrink-0 bg-surface border-r border-line flex flex-col fixed inset-y-0 left-0 overflow-y-auto">
         <div className="px-5 py-4 flex items-center gap-2">
-          <span className="w-7 h-7 rounded-lg bg-mint text-white font-extrabold text-[15px] flex items-center justify-center">모</span>
+          <Logo size={26} />
           <span className="font-extrabold text-[16px] tracking-tight">모아</span>
         </div>
 

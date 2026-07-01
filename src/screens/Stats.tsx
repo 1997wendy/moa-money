@@ -7,6 +7,7 @@ import { won, compact, signed, thisMonth, monthLabel, addMonth } from '../lib/fo
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
 import { krwValue } from '../lib/assets'
+import { detectFixed } from '../lib/fixedCost'
 import type { Goal, Transaction } from '../db/types'
 
 /** 그 달의 순수익(수입 - 내 부담 지출) */
@@ -105,6 +106,9 @@ export default function Stats() {
     return { monthsLeft, needMonthly, rate }
   }, [activeGoal, remain, series, now])
 
+  const fixed = useMemo(() => detectFixed(txs), [txs])
+  const fixedTotal = fixed.reduce((s, f) => s + f.monthly, 0)
+
   return (
     <div>
       <PageHeader title="통계·목표" desc="자산 흐름·증감률·목표 도달 예측" />
@@ -197,6 +201,25 @@ export default function Stats() {
           })()}
         </Card>
       )}
+
+      {/* 고정지출·구독 자동 인식 */}
+      <Card className="mt-3.5">
+        <CardLabel>🔁 고정지출·구독 (자동 인식){fixed.length > 0 ? ` · 월 ₩${won(fixedTotal)}` : ''}</CardLabel>
+        {fixed.length === 0 ? (
+          <Empty>매달 반복되는 결제가 아직 안 보여요. (2개월 이상 쌓이면 자동 인식)</Empty>
+        ) : (
+          fixed.map((f) => (
+            <div key={f.merchant} className="flex items-center justify-between py-2 border-b border-line last:border-0">
+              <div>
+                <div className="text-[13.5px] font-semibold">{f.merchant} <span className="text-[11px] text-sub font-normal">{f.category}</span></div>
+                <div className="text-[11px] text-sub">{f.months}개월째 · 다음 예상 {f.next.slice(5).replace('-', '/')}</div>
+              </div>
+              <span className="tnum font-bold text-[14px] text-expense">-{won(f.monthly)}/월</span>
+            </div>
+          ))
+        )}
+        {fixed.length > 0 && <div className="text-[11px] text-sub mt-2">💡 안 쓰는 구독이 있다면 여기서 정리 대상을 찾아보세요.</div>}
+      </Card>
 
       <Fab onClick={() => setModal(true)} label="목표 추가" />
       <GoalModal open={modal} onClose={() => setModal(false)} profileId={profileId} defaultFrom={month} />
