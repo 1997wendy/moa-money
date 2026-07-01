@@ -9,6 +9,7 @@ export interface Profile {
   name: string
   order: number
   salary?: number // 연 총급여 (연말정산 계산용)
+  hiddenMenus?: string[] // 이 프로필에서 숨길 메뉴 키
 }
 
 export type AssetType = 'cash' | 'account' | 'stock' | 'coin' | 'etc'
