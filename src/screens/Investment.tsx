@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
 import { History, Trash2 } from 'lucide-react'
 import { repo } from '../db/repository'
@@ -103,15 +103,23 @@ export default function Investment() {
       L.push(`덜기: ${a ? a.name : d.label}${roiTxt} 약 ₩${won(-d.diff)} 매도 검토${redeploy}.`)
     }
     if (fixedTotal > 0) L.push(`고정지출 ₩${won(fixedTotal)}/월을 감안해 여력을 잡았어요.`)
+    if (profile?.investContext?.trim()) {
+      L.push(`내 성향 반영: ${profile.investContext.trim()}`)
+      if (/적립|분할|dca/i.test(profile.investContext)) L.push('적립식 성향 → 시점 예측보다 매주 정액 분할매수를 우선하세요.')
+    }
     if (dynamic) L.push(dynamic)
     return L
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [capacity, avgNet, underInv, overInv, fixedTotal, dynamic, assets])
+  }, [capacity, avgNet, underInv, overInv, fixedTotal, dynamic, assets, profile?.investContext])
 
-  // 하루 1건 자동 저장(오늘 것은 최신 내용으로 갱신)
+  // 하루 1건 자동 저장 — 세션당 오늘 1회만(삭제한 걸 되살리지 않도록)
   const today = todayISO()
+  const savedRef = useRef('')
   useEffect(() => {
     if (!profileId || total === 0) return
+    const key = `${profileId}-${today}`
+    if (savedRef.current === key) return
+    savedRef.current = key
     repo.upsertCoachNote({ id: `coach-${profileId}-${today}`, profileId, date: today, createdAt: new Date().toISOString(), content: coachLines.join('\n'), source: 'rule' })
   }, [profileId, today, total, coachLines])
 
@@ -119,6 +127,9 @@ export default function Investment() {
     if (!profile) return
     await repo.upsertProfile({ ...profile, targetAlloc: alloc })
     setMsg('목표 비중을 저장했어요.')
+  }
+  async function saveContext(v: string) {
+    if (profile) await repo.upsertProfile({ ...profile, investContext: v.trim() || undefined })
   }
   async function setAvg(a: Asset, v: number | undefined) { await repo.upsertAsset({ ...a, avgPrice: v }) }
 
@@ -182,8 +193,12 @@ export default function Investment() {
         <ul className="space-y-1.5">
           {coachLines.map((l, i) => <li key={i} className="text-[13px] flex gap-2"><span className="text-mint-d">•</span><span>{l}</span></li>)}
         </ul>
+        <div className="mt-3">
+          <div className="text-[12px] font-semibold text-sub mb-1">내 투자 성향/메모 (코칭에 반영)</div>
+          <textarea defaultValue={profile?.investContext ?? ''} onBlur={(e) => saveContext(e.target.value)} placeholder="예: 매달 적립식으로 꾸준히 / 공격적이진 않게 / 관심: 반도체 ETF, 배당주" className={inputCls + ' h-16 resize-none leading-snug'} />
+        </div>
         <div className="mt-3 text-[12px] bg-canvas rounded-lg px-3 py-2.5 text-sub">
-          🤖 위 코칭은 <b className="text-ink">내 데이터(현금흐름·비중) 기반 규칙</b> 추천이에요. <b className="text-ink">최근 뉴스·주가 흐름을 반영한 AI 매수/매도 추천(근거 첨부)</b>은 <b className="text-ink">클라우드 + AI 단계</b>에서 이 코칭에 함께 담을 예정이에요.
+          🤖 위 코칭은 <b className="text-ink">내 데이터(현금흐름·비중·성향메모) 기반 규칙</b> 추천이에요. <b className="text-ink">최근 경제 뉴스·주가 흐름 + 카드값·적립식 성향까지 반영한 AI 매수/매도 추천(근거 첨부)</b>은 <b className="text-ink">클라우드 + AI 단계</b>에서 이 코칭 영역에 함께 담을 예정이에요.
         </div>
       </Card>
 
@@ -220,22 +235,30 @@ export default function Investment() {
 
 function CoachHistoryModal({ open, onClose, notes }: { open: boolean; onClose: () => void; notes: CoachNote[] }) {
   const [q, setQ] = useState('')
+  const [openIds, setOpenIds] = useState<Set<string>>(new Set())
   const filtered = notes.filter((n) => !q || n.date.includes(q) || n.content.includes(q))
+  const toggle = (id: string) => setOpenIds((p) => { const n = new Set(p); n.has(id) ? n.delete(id) : n.add(id); return n })
+
   return (
     <Modal open={open} onClose={onClose} title={`코칭 기록 (${notes.length}건)`}>
       <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="날짜(예: 2026-07) 또는 내용 검색" className={inputCls + ' mb-3'} />
       {filtered.length === 0 ? (
         <div className="text-center text-sub text-[13px] py-6">기록이 없어요.</div>
       ) : (
-        filtered.map((n) => (
-          <div key={n.id} className="py-2.5 border-b border-line last:border-0">
-            <div className="flex items-center justify-between">
-              <span className="text-[12px] font-bold text-sub">{n.date}{n.source === 'ai' ? ' · AI' : ''}</span>
-              <button onClick={() => repo.deleteCoachNote(n.id)} className="text-sub hover:text-expense"><Trash2 size={14} /></button>
+        filtered.map((n) => {
+          const isOpen = openIds.has(n.id)
+          return (
+            <div key={n.id} className="border-b border-line last:border-0">
+              <div className="flex items-center gap-2 py-2.5">
+                <button onClick={() => toggle(n.id)} className="flex-1 min-w-0 text-left">
+                  <div className="text-[12px] font-bold text-sub">{n.date}{n.source === 'ai' ? ' · AI' : ''}</div>
+                  <div className={`text-[12.5px] mt-0.5 ${isOpen ? 'whitespace-pre-line' : 'truncate'}`}>{isOpen ? n.content : n.content.split('\n')[0]}</div>
+                </button>
+                <button onClick={() => repo.deleteCoachNote(n.id)} className="text-sub hover:text-expense shrink-0 p-1"><Trash2 size={14} /></button>
+              </div>
             </div>
-            <div className="text-[12.5px] whitespace-pre-line mt-1">{n.content}</div>
-          </div>
-        ))
+          )
+        })
       )}
     </Modal>
   )
