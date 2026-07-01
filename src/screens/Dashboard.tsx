@@ -2,9 +2,10 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Link } from 'react-router-dom'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
-import { won, signed, compact, thisMonth, monthLabel } from '../lib/format'
+import { won, signed, compact, thisMonth, monthLabel, addMonth } from '../lib/format'
 import { adviceFor } from '../lib/cardAdvisor'
 import { krwValue } from '../lib/assets'
+import { netWorthSeries } from '../lib/networth'
 import { Card, CardLabel, PageHeader, Empty } from '../components/ui'
 
 export default function Dashboard() {
@@ -13,11 +14,19 @@ export default function Dashboard() {
 
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month }) : []), [profileId, month], [])
+  const allTxs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
   const goal = useLiveQuery(() => (profileId ? repo.goalForMonth(profileId, month) : undefined), [profileId, month])
   const schedules = useLiveQuery(() => (profileId ? repo.listSchedules(profileId) : []), [profileId], [])
   const cards = useLiveQuery(() => (profileId ? repo.listCards(profileId) : []), [profileId], [])
 
   const totalAssets = assets.reduce((s, a) => s + krwValue(a), 0)
+
+  // 최근 6개월 순자산 추이(추정)
+  const months6 = Array.from({ length: 6 }, (_, i) => addMonth(month, -(5 - i)))
+  const trend = netWorthSeries(allTxs, totalAssets, months6)
+  const maxNw = Math.max(1, ...trend.map((s) => s.nw))
+  const firstNw = trend[0]?.nw ?? 0
+  const trendPct = firstNw > 0 ? ((totalAssets - firstNw) / firstNw) * 100 : 0
 
   // 이번 달 수입/지출 (받을돈=내 돈 아님 → 지출 통계에서 제외)
   let income = 0
@@ -69,6 +78,24 @@ export default function Dashboard() {
           <div className="text-[12px] text-sub mt-1">순수익 {signed(net)}</div>
         </Card>
       </div>
+
+      {/* 순자산 추이 (최근 6개월, 추정) */}
+      <Card className="mt-3.5">
+        <div className="flex items-center justify-between">
+          <CardLabel>순자산 추이 · 최근 6개월</CardLabel>
+          <span className={`text-[12px] font-bold tnum ${trendPct >= 0 ? 'text-mint-d' : 'text-expense'}`}>{trendPct >= 0 ? '+' : ''}{trendPct.toFixed(1)}%</span>
+        </div>
+        <div className="flex items-end gap-2.5 h-[120px] pt-3">
+          {trend.map((s) => (
+            <div key={s.ym} className="flex-1 flex flex-col items-center justify-end h-full">
+              <div className="w-full rounded-t-md bg-mint" style={{ height: `${(s.nw / maxNw) * 100}%`, minHeight: 4 }} title={won(s.nw)} />
+              <div className="text-[10.5px] text-sub mt-1">{Number(s.ym.split('-')[1])}월</div>
+              <div className="text-[9.5px] text-sub tnum">{compact(s.nw)}</div>
+            </div>
+          ))}
+        </div>
+        <div className="text-[11px] text-sub mt-1">※ 현금흐름(수입−지출) 기준 추정. 코인·주식 시세 변동은 최신 값 기준.</div>
+      </Card>
 
       <div className="grid grid-cols-2 gap-3.5 mt-3.5">
         <Card>
