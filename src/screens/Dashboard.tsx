@@ -4,6 +4,7 @@ import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, signed, compact, thisMonth, monthLabel } from '../lib/format'
 import { adviceFor } from '../lib/cardAdvisor'
+import { krwValue } from '../lib/assets'
 import { Card, CardLabel, PageHeader, Empty } from '../components/ui'
 
 export default function Dashboard() {
@@ -16,7 +17,7 @@ export default function Dashboard() {
   const schedules = useLiveQuery(() => (profileId ? repo.listSchedules(profileId) : []), [profileId], [])
   const cards = useLiveQuery(() => (profileId ? repo.listCards(profileId) : []), [profileId], [])
 
-  const totalAssets = assets.reduce((s, a) => s + a.amount, 0)
+  const totalAssets = assets.reduce((s, a) => s + krwValue(a), 0)
 
   // 이번 달 수입/지출 (받을돈=내 돈 아님 → 지출 통계에서 제외)
   let income = 0

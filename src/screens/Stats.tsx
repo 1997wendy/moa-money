@@ -6,6 +6,7 @@ import { useProfile } from '../state/profile'
 import { won, compact, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
+import { krwValue } from '../lib/assets'
 import type { Goal, Transaction } from '../db/types'
 
 /** 그 달의 순수익(수입 - 내 부담 지출) */
@@ -27,7 +28,7 @@ export default function Stats() {
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const goals = useLiveQuery(() => (profileId ? repo.listGoals(profileId) : []), [profileId], [])
 
-  const totalAssets = assets.reduce((s, a) => s + a.amount, 0)
+  const totalAssets = assets.reduce((s, a) => s + krwValue(a), 0)
   const now = thisMonth()
 
   // 순자산 시계열(추정): 현재 총자산에서 이후 순수익을 역산해 과거 순자산 복원 (현금흐름 기준)

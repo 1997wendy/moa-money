@@ -93,16 +93,16 @@ export async function seedIfEmpty() {
 
   // ---- 자산 ----
   await db.assets.bulkPut([
-    { id: uid(), profileId: me, type: 'account', name: '국민은행 입출금', amount: 32100000, updatedAt: now() },
-    { id: uid(), profileId: me, type: 'account', name: '토스뱅크 예금', amount: 32000000, updatedAt: now() },
-    { id: uid(), profileId: me, type: 'stock', name: '애플(AAPL)', ticker: 'AAPL', quantity: 40, unitPrice: 355000, amount: 14200000, updatedAt: now() },
-    { id: uid(), profileId: me, type: 'stock', name: '삼성전자', ticker: '005930', quantity: 200, unitPrice: 82000, amount: 16400000, updatedAt: now() },
-    { id: uid(), profileId: me, type: 'stock', name: 'S&P500 ETF', quantity: 100, unitPrice: 197000, amount: 19700000, updatedAt: now() },
+    { id: uid(), profileId: me, type: 'checking', institution: '국민은행', name: '주거래 통장', amount: 32100000, updatedAt: now() },
+    { id: uid(), profileId: me, type: 'deposit', institution: '토스뱅크', name: '예금', amount: 32000000, updatedAt: now() },
+    { id: uid(), profileId: me, type: 'stock', institution: '토스증권', name: '애플', ticker: 'AAPL', quantity: 40, unitPrice: 355000, amount: 14200000, updatedAt: now() },
+    { id: uid(), profileId: me, type: 'stock', institution: '삼성증권', name: '삼성전자', quantity: 200, unitPrice: 82000, amount: 16400000, updatedAt: now() },
+    { id: uid(), profileId: me, type: 'etf', institution: '토스증권', name: 'S&P500 ETF', quantity: 100, unitPrice: 197000, amount: 19700000, updatedAt: now() },
     { id: uid(), profileId: me, type: 'coin', name: '비트코인', ticker: 'BTC', quantity: 0.15, unitPrice: 102000000, amount: 15300000, updatedAt: now() },
     { id: uid(), profileId: me, type: 'coin', name: '이더리움', ticker: 'ETH', quantity: 2.1, unitPrice: 3619000, amount: 7600000, updatedAt: now() },
     // 동생
-    { id: uid(), profileId: sib, type: 'account', name: '카카오뱅크', amount: 8400000, updatedAt: now() },
-    { id: uid(), profileId: sib, type: 'stock', name: 'S&P500 ETF', quantity: 20, unitPrice: 197000, amount: 3940000, updatedAt: now() },
+    { id: uid(), profileId: sib, type: 'checking', institution: '카카오뱅크', name: '통장', amount: 8400000, updatedAt: now() },
+    { id: uid(), profileId: sib, type: 'etf', institution: '토스증권', name: 'S&P500 ETF', quantity: 20, unitPrice: 197000, amount: 3940000, updatedAt: now() },
   ])
 
   // ---- 거래 ----

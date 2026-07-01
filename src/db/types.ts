@@ -12,14 +12,16 @@ export interface Profile {
   hiddenMenus?: string[] // 이 프로필에서 숨길 메뉴 키
 }
 
-export type AssetType = 'cash' | 'account' | 'stock' | 'coin' | 'etc'
-/** 자산 (계좌·주식·코인 등) */
+/** 자산 (계좌·주식·코인 등). type = 세부분류 키(assets.ts SUBTYPES) */
 export interface Asset {
   id: ID
   profileId: ID
-  type: AssetType
+  type: string
   name: string
-  amount: number // 평가금액 (KRW)
+  amount: number // 통화 단위 금액 (외화면 외화 금액)
+  currency?: string // 'KRW' | 'USD' | 'JPY' | 'VND' (기본 KRW)
+  fxRate?: number // 외화 1단위 → 원화 환율
+  institution?: string // 은행/증권사
   quantity?: number // 투자자산 보유 수량
   unitPrice?: number // 단가
   ticker?: string // 종목 코드
