@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Plus } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, compact, thisMonth, monthLabel, addMonth, addDays } from '../lib/format'
 import { holidayName } from '../lib/holidays'
 import { SCH_COLORS, colorOf } from '../lib/colors'
 import { PageHeader, Button, Modal, Field, inputCls, Fab } from '../components/ui'
+import TimeInput from '../components/TimeInput'
 import type { RepeatKind, Schedule, Transaction } from '../db/types'
 
-/** 반복 규칙을 고려해 해당 날짜에 일정이 뜨는지 */
+/** 반복 규칙 + 예외를 고려해 해당 날짜에 일정이 뜨는지 */
 function occursOn(s: Schedule, dateStr: string): boolean {
   if (dateStr < s.date) return false
   if (s.repeatUntil && dateStr > s.repeatUntil) return false
+  if (s.exceptions?.includes(dateStr)) return false
   const rep = s.repeat ?? 'none'
   if (rep === 'none') return dateStr === s.date
   const d = new Date(dateStr + 'T00:00')
@@ -31,7 +33,7 @@ export default function Calendar() {
   const [editSch, setEditSch] = useState<Schedule | undefined>()
   const [occDate, setOccDate] = useState('')
   const [presetDate, setPresetDate] = useState('')
-  const [dayDetail, setDayDetail] = useState<string | null>(null)
+  const [dayModal, setDayModal] = useState<string | null>(null)
 
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month }) : []), [profileId, month], [])
   const schedules = useLiveQuery(() => (profileId ? repo.listSchedules(profileId) : []), [profileId], [])
@@ -52,9 +54,9 @@ export default function Calendar() {
   const cells: (number | null)[] = [...Array(startPad).fill(null), ...Array.from({ length: daysInMonth }, (_, i) => i + 1)]
   while (cells.length % 7 !== 0) cells.push(null)
   const dateStr = (d: number) => `${month}-${String(d).padStart(2, '0')}`
-  const schedulesOn = (d: number) => schedules.filter((s) => occursOn(s, dateStr(d)))
+  const schedulesOn = (ds: string) => schedules.filter((s) => occursOn(s, ds))
 
-  function openAdd(d?: number) { setEditSch(undefined); setOccDate(''); setPresetDate(d ? dateStr(d) : `${month}-01`); setSchModal(true) }
+  function openAdd(ds: string) { setEditSch(undefined); setOccDate(''); setPresetDate(ds); setSchModal(true) }
   function openEdit(s: Schedule, occ: string) { setEditSch(s); setOccDate(occ); setSchModal(true) }
 
   return (
@@ -81,11 +83,11 @@ export default function Calendar() {
             const hol = d ? holidayName(ds) : undefined
             const dow = i % 7
             const isRed = dow === 0 || !!hol
-            const daySch = d ? schedulesOn(d) : []
+            const daySch = d ? schedulesOn(ds) : []
             const shown = daySch.slice(0, 3)
             const moreCount = daySch.length - shown.length
             return (
-              <div key={i} onClick={() => d && openAdd(d)} className={`min-h-[96px] bg-surface p-1.5 flex flex-col ${d ? 'cursor-pointer hover:bg-canvas' : 'bg-canvas'}`}>
+              <div key={i} onClick={() => d && openAdd(ds)} className={`min-h-[96px] bg-surface p-1.5 flex flex-col ${d ? 'cursor-pointer hover:bg-canvas' : 'bg-canvas'}`}>
                 {d && (
                   <>
                     <div className="flex items-center justify-between">
@@ -97,12 +99,9 @@ export default function Calendar() {
                       {shown.map((s) => {
                         const c = colorOf(s.color)
                         return (
-                          <button
-                            key={s.id}
-                            onClick={(e) => { e.stopPropagation(); openEdit(s, ds) }}
+                          <button key={s.id} onClick={(e) => { e.stopPropagation(); openEdit(s, ds) }}
                             className="w-full text-left text-[10px] font-semibold px-1 py-0.5 rounded truncate flex items-center gap-1"
-                            style={{ background: c.bg, color: c.fg }}
-                          >
+                            style={{ background: c.bg, color: c.fg }}>
                             {s.time && <span className="tnum opacity-80 shrink-0">{s.time}</span>}
                             <span className="truncate">{s.title}</span>
                             {s.memo && <span className="shrink-0" title="메모">📝</span>}
@@ -110,14 +109,13 @@ export default function Calendar() {
                           </button>
                         )
                       })}
-                      {moreCount > 0 && <div className="text-[9.5px] text-sub pl-1">+{moreCount}개 더</div>}
+                      {moreCount > 0 && (
+                        <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} className="text-[9.5px] text-mint-d font-bold pl-1 hover:underline">+{moreCount}개 더 보기</button>
+                      )}
                     </div>
 
                     {(info?.expense || info?.income) ? (
-                      <button
-                        onClick={(e) => { e.stopPropagation(); setDayDetail(ds) }}
-                        className="mt-1 flex items-center justify-end gap-1.5 text-[10px] font-bold tnum rounded bg-canvas px-1 py-0.5 hover:bg-line/60"
-                      >
+                      <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} className="mt-1 flex items-center justify-end gap-1.5 text-[10px] font-bold tnum rounded bg-canvas px-1 py-0.5 hover:bg-line/60">
                         {info?.income ? <span className="text-income">+{compact(info.income)}</span> : null}
                         {info?.expense ? <span className="text-expense">-{compact(info.expense)}</span> : null}
                       </button>
@@ -131,46 +129,71 @@ export default function Calendar() {
         <div className="flex gap-4 mt-3 text-[12px] text-sub flex-wrap">
           <span className="flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-expense inline-block" />지출</span>
           <span className="flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-income inline-block" />수입</span>
-          <span className="text-[11px]">· 금액 클릭 → 그날 내역 · 일정 클릭 → 수정</span>
+          <span className="text-[11px]">· 날짜 클릭 → 일정 추가 · 금액/＋N → 그날 모아보기</span>
         </div>
       </div>
 
-      <Fab onClick={() => openAdd()} label="일정 추가" />
+      <Fab onClick={() => openAdd(`${month}-01`)} label="일정 추가" />
       <ScheduleModal open={schModal} onClose={() => setSchModal(false)} edit={editSch} occDate={occDate} date={presetDate} profileId={profileId} />
-      <DayDetailModal date={dayDetail} txs={txs} onClose={() => setDayDetail(null)} />
+      <DayModal
+        date={dayModal}
+        schedules={dayModal ? schedulesOn(dayModal) : []}
+        txs={txs}
+        onClose={() => setDayModal(null)}
+        onEdit={(s) => { const dd = dayModal!; setDayModal(null); openEdit(s, dd) }}
+        onAdd={() => { const dd = dayModal!; setDayModal(null); openAdd(dd) }}
+      />
     </div>
   )
 }
 
-function DayDetailModal({ date, txs, onClose }: { date: string | null; txs: Transaction[]; onClose: () => void }) {
+function DayModal({
+  date, schedules, txs, onClose, onEdit, onAdd,
+}: {
+  date: string | null; schedules: Schedule[]; txs: Transaction[]
+  onClose: () => void; onEdit: (s: Schedule) => void; onAdd: () => void
+}) {
   if (!date) return null
   const rows = txs.filter((t) => t.date === date)
   const income = rows.filter((t) => t.type === 'income').reduce((a, t) => a + t.amount, 0)
   const expense = rows.filter((t) => t.type === 'expense').reduce((a, t) => a + t.splits.filter((s) => !s.owedBy).reduce((x, s) => x + s.amount, 0), 0)
+
   return (
-    <Modal open={!!date} onClose={onClose} title={`${Number(date.slice(5, 7))}월 ${Number(date.slice(8))}일 내역`}>
-      <div className="flex gap-3 mb-3">
-        <div className="flex-1 bg-canvas rounded-lg p-2.5 text-center">
-          <div className="text-[11px] text-sub">수입</div>
-          <div className="text-[15px] font-bold text-income tnum">+{won(income)}</div>
-        </div>
-        <div className="flex-1 bg-canvas rounded-lg p-2.5 text-center">
-          <div className="text-[11px] text-sub">지출(내 부담)</div>
-          <div className="text-[15px] font-bold text-expense tnum">-{won(expense)}</div>
-        </div>
+    <Modal open={!!date} onClose={onClose} title={`${Number(date.slice(5, 7))}월 ${Number(date.slice(8))}일`}>
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-[12px] font-semibold text-sub">일정 {schedules.length}건</span>
+        <button onClick={onAdd} className="text-[12px] font-bold text-mint-d flex items-center gap-1"><Plus size={13} /> 일정 추가</button>
       </div>
-      {rows.length === 0 ? (
-        <div className="text-center text-sub text-[13px] py-6">이 날 거래가 없어요.</div>
+      {schedules.length === 0 ? (
+        <div className="text-[13px] text-sub py-2">일정이 없어요.</div>
       ) : (
-        rows.map((t) => (
-          <div key={t.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
-            <div>
-              <div className="text-[13.5px] font-semibold">{t.merchant}</div>
-              <div className="text-[11px] text-sub">{t.splits.map((s) => s.category).join(', ')}{t.method ? ` · ${t.method}` : ''}</div>
-            </div>
-            <span className={`tnum font-bold text-[14px] ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>{t.type === 'income' ? '+' : '-'}{won(t.amount)}</span>
+        schedules.map((s) => {
+          const c = colorOf(s.color)
+          return (
+            <button key={s.id} onClick={() => onEdit(s)} className="w-full text-left flex items-center gap-2 py-2 border-b border-line last:border-0 hover:bg-canvas -mx-2 px-2 rounded-lg">
+              <i className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: c.dot }} />
+              {s.time && <span className="text-[12px] tnum text-sub">{s.time}</span>}
+              <span className="text-[13.5px] font-semibold flex-1">{s.title}</span>
+              {s.memo && <span title="메모">📝</span>}
+              {s.repeat && s.repeat !== 'none' && <span title="반복">🔁</span>}
+            </button>
+          )
+        })
+      )}
+
+      {rows.length > 0 && (
+        <div className="mt-4">
+          <div className="flex gap-3 mb-2">
+            <div className="flex-1 bg-canvas rounded-lg p-2 text-center"><div className="text-[11px] text-sub">수입</div><div className="text-[14px] font-bold text-income tnum">+{won(income)}</div></div>
+            <div className="flex-1 bg-canvas rounded-lg p-2 text-center"><div className="text-[11px] text-sub">지출(내 부담)</div><div className="text-[14px] font-bold text-expense tnum">-{won(expense)}</div></div>
           </div>
-        ))
+          {rows.map((t) => (
+            <div key={t.id} className="flex items-center justify-between py-1.5 border-b border-line last:border-0">
+              <div><div className="text-[13px] font-semibold">{t.merchant}</div><div className="text-[11px] text-sub">{t.splits.map((s) => s.category).join(', ')}</div></div>
+              <span className={`tnum font-bold text-[13px] ${t.type === 'income' ? 'text-income' : 'text-expense'}`}>{t.type === 'income' ? '+' : '-'}{won(t.amount)}</span>
+            </div>
+          ))}
+        </div>
       )}
     </Modal>
   )
@@ -179,6 +202,7 @@ function DayDetailModal({ date, txs, onClose }: { date: string | null; txs: Tran
 const REPEATS: [RepeatKind, string][] = [
   ['none', '반복 안 함'], ['daily', '매일'], ['weekly', '매주'], ['monthly', '매월'], ['yearly', '매년'],
 ]
+type Scope = 'single' | 'future' | 'all'
 
 function ScheduleModal({
   open, onClose, edit, occDate, date, profileId,
@@ -192,69 +216,78 @@ function ScheduleModal({
   const [color, setColor] = useState('violet')
   const [repeat, setRepeat] = useState<RepeatKind>('none')
   const [repeatUntil, setRepeatUntil] = useState('')
-  const [scope, setScope] = useState<'future' | 'all'>('future')
+  const [scope, setScope] = useState<Scope>('single')
 
   const isRepeating = !!edit && (edit.repeat ?? 'none') !== 'none'
-  // 반복 일정을 "첫 회차가 아닌" 날짜에서 열었을 때만 범위 선택 노출
-  const showScope = isRepeating && occDate !== '' && occDate !== edit!.date
 
   useEffect(() => {
     if (!open) return
-    setScope('future')
+    setScope('single')
     if (edit) {
-      setD(edit.date); setTime(edit.time ?? ''); setTitle(edit.title); setMemo(edit.memo ?? '')
+      setD(occDate || edit.date); setTime(edit.time ?? ''); setTitle(edit.title); setMemo(edit.memo ?? '')
       setColor(edit.color ?? 'violet'); setRepeat(edit.repeat ?? 'none'); setRepeatUntil(edit.repeatUntil ?? '')
     } else {
       setD(date); setTime(''); setTitle(''); setMemo(''); setColor('violet'); setRepeat('none'); setRepeatUntil('')
     }
-  }, [open, edit, date])
+  }, [open, edit, date, occDate])
 
-  function build(id: string, startDate: string): Schedule {
-    return {
-      id, profileId, date: startDate, time: time || undefined,
-      title: title.trim(), memo: memo.trim() || undefined, source: 'manual',
-      color, repeat, repeatUntil: repeat !== 'none' && repeatUntil ? repeatUntil : undefined,
-    }
-  }
+  const base = () => ({
+    profileId, source: 'manual' as const, title: title.trim(),
+    time: time || undefined, memo: memo.trim() || undefined, color,
+  })
+  const ru = () => (repeat !== 'none' && repeatUntil ? repeatUntil : undefined)
 
   async function save() {
     if (!title.trim()) return
-    if (showScope && scope === 'future') {
-      // 이 회차부터 이후만 변경: 원본은 전날까지로 자르고, 새 시리즈를 이 회차부터 생성
-      await repo.upsertSchedule({ ...edit!, repeatUntil: addDays(occDate, -1) })
-      await repo.upsertSchedule(build(uid(), occDate))
+    if (!edit) {
+      await repo.upsertSchedule({ id: uid(), date: d, repeat, repeatUntil: ru(), ...base() })
+    } else if (!isRepeating) {
+      await repo.upsertSchedule({ id: edit.id, date: d, repeat, repeatUntil: ru(), ...base() })
+    } else if (scope === 'all') {
+      await repo.upsertSchedule({ ...edit, ...base(), repeat, repeatUntil: ru() })
+    } else if (scope === 'future') {
+      await repo.upsertSchedule({ ...edit, repeatUntil: addDays(occDate, -1) })
+      await repo.upsertSchedule({ id: uid(), date: occDate, repeat, repeatUntil: ru(), ...base() })
     } else {
-      await repo.upsertSchedule(build(edit?.id ?? uid(), edit ? edit.date : d))
+      // single: 해당 회차만 예외 처리 + 단일 일정 생성
+      await repo.upsertSchedule({ ...edit, exceptions: [...(edit.exceptions ?? []), occDate] })
+      await repo.upsertSchedule({ id: uid(), date: occDate, repeat: 'none', ...base() })
     }
     onClose()
   }
 
-  async function del(all: boolean) {
-    if (isRepeating && !all && occDate && occDate !== edit!.date) {
-      // 이 회차부터 이후만 삭제 = 원본을 전날까지로 자름
-      await repo.upsertSchedule({ ...edit!, repeatUntil: addDays(occDate, -1) })
+  async function del() {
+    if (!edit) return
+    if (!isRepeating || scope === 'all') {
+      await repo.deleteSchedule(edit.id)
+    } else if (scope === 'future') {
+      await repo.upsertSchedule({ ...edit, repeatUntil: addDays(occDate, -1) })
     } else {
-      await repo.deleteSchedule(edit!.id)
+      await repo.upsertSchedule({ ...edit, exceptions: [...(edit.exceptions ?? []), occDate] })
     }
     onClose()
   }
 
   return (
     <Modal open={open} onClose={onClose} title={edit ? '일정 수정' : '일정 추가'}>
-      {showScope && (
+      {isRepeating && (
         <div className="mb-3">
-          <div className="text-[12px] font-semibold text-sub mb-1.5">적용 범위 (반복 일정)</div>
-          <div className="flex gap-2">
-            {([['future', '이 일정부터 이후'], ['all', '전체 일정']] as [typeof scope, string][]).map(([v, l]) => (
-              <button key={v} onClick={() => setScope(v)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${scope === v ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{l}</button>
+          <div className="text-[12px] font-semibold text-sub mb-1.5">적용 범위 (반복 일정 · {occDate} 회차)</div>
+          <div className="flex gap-1.5">
+            {([['single', '이 일정만'], ['future', '이후 전체'], ['all', '전체']] as [Scope, string][]).map(([v, l]) => (
+              <button key={v} onClick={() => setScope(v)} className={`flex-1 py-2 rounded-[10px] text-[12px] font-bold border ${scope === v ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{l}</button>
             ))}
           </div>
         </div>
       )}
 
       <div className="grid grid-cols-2 gap-3">
-        <Field label="날짜"><input type="date" min="2000-01-01" max="2100-12-31" value={d} onChange={(e) => setD(e.target.value)} className={inputCls} disabled={!!edit && scope === 'all' && isRepeating} /></Field>
-        <Field label="시간 (선택)"><input type="time" value={time} onChange={(e) => setTime(e.target.value)} className={inputCls} /></Field>
+        {(!isRepeating) ? (
+          <Field label="날짜"><input type="date" min="2000-01-01" max="2100-12-31" value={d} onChange={(e) => setD(e.target.value)} className={inputCls} /></Field>
+        ) : (
+          <Field label="선택한 날짜"><div className={inputCls + ' bg-canvas text-sub'}>{occDate}</div></Field>
+        )}
+        <Field label="시간 (선택)"><TimeInput value={time} onChange={setTime} /></Field>
       </div>
       <Field label="제목"><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="예: 카드결제일" className={inputCls} /></Field>
 
@@ -270,29 +303,24 @@ function ScheduleModal({
         </div>
       </Field>
 
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="반복">
-          <select value={repeat} onChange={(e) => setRepeat(e.target.value as RepeatKind)} className={inputCls}>
-            {REPEATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
-          </select>
-        </Field>
-        {repeat !== 'none' && (
-          <Field label="반복 종료일 (선택)"><input type="date" min="2000-01-01" max="2100-12-31" value={repeatUntil} onChange={(e) => setRepeatUntil(e.target.value)} className={inputCls} /></Field>
-        )}
-      </div>
+      {/* 반복 설정: single 회차 편집일 땐 숨김(해당 회차는 단일이 됨) */}
+      {!(isRepeating && scope === 'single') && (
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="반복">
+            <select value={repeat} onChange={(e) => setRepeat(e.target.value as RepeatKind)} className={inputCls}>
+              {REPEATS.map(([k, l]) => <option key={k} value={k}>{l}</option>)}
+            </select>
+          </Field>
+          {repeat !== 'none' && (
+            <Field label="반복 종료일 (선택)"><input type="date" min="2000-01-01" max="2100-12-31" value={repeatUntil} onChange={(e) => setRepeatUntil(e.target.value)} className={inputCls} /></Field>
+          )}
+        </div>
+      )}
 
       <Field label="메모 (선택)"><input value={memo} onChange={(e) => setMemo(e.target.value)} className={inputCls} /></Field>
 
       <div className="flex gap-2 mt-4 items-center">
-        {edit && (
-          showScope ? (
-            <button onClick={() => del(scope === 'all')} className="text-[13px] font-bold text-expense">
-              삭제 ({scope === 'all' ? '전체' : '이후'})
-            </button>
-          ) : (
-            <button onClick={() => del(true)} className="text-[13px] font-bold text-expense">삭제</button>
-          )
-        )}
+        {edit && <button onClick={del} className="text-[13px] font-bold text-expense">삭제</button>}
         <div className="flex-1" />
         <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>

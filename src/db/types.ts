@@ -67,6 +67,7 @@ export interface Schedule {
   color?: string // 색상 키 (colors.ts)
   repeat?: RepeatKind
   repeatUntil?: string // yyyy-mm-dd (선택)
+  exceptions?: string[] // 이 날짜들은 반복에서 제외 (단일 회차 수정/삭제용)
 }
 
 /** 카드 (혜택·실적 규칙) */

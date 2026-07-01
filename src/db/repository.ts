@@ -71,7 +71,11 @@ export const repo = {
     const goals = await this.listGoals(profileId)
     return goals
       .filter((g) => g.effectiveFrom <= month)
-      .sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))[0]
+      .sort((a, b) =>
+        a.effectiveFrom !== b.effectiveFrom
+          ? a.effectiveFrom < b.effectiveFrom ? 1 : -1
+          : a.createdAt < b.createdAt ? 1 : -1,
+      )[0]
   },
 
   // ---- People (정산 상대) ----

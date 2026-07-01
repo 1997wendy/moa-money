@@ -8,8 +8,6 @@ import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab
 import AmountInput from '../components/AmountInput'
 import type { Goal, Transaction } from '../db/types'
 
-const MILESTONES = [50000000, 100000000, 200000000, 300000000, 500000000, 1000000000]
-
 /** 그 달의 순수익(수입 - 내 부담 지출) */
 function monthNet(txs: Transaction[], ym: string) {
   let income = 0, expense = 0
@@ -45,7 +43,14 @@ export default function Stats() {
   }, [txs, totalAssets, now])
 
   const activeGoal = useMemo(
-    () => goals.filter((g) => g.effectiveFrom <= month).sort((a, b) => (a.effectiveFrom < b.effectiveFrom ? 1 : -1))[0],
+    () =>
+      goals
+        .filter((g) => g.effectiveFrom <= month)
+        .sort((a, b) =>
+          a.effectiveFrom !== b.effectiveFrom
+            ? a.effectiveFrom < b.effectiveFrom ? 1 : -1
+            : a.createdAt < b.createdAt ? 1 : -1,
+        )[0],
     [goals, month],
   )
 
@@ -98,9 +103,6 @@ export default function Stats() {
     const rate = avgIncome > 0 ? (needMonthly / avgIncome) * 100 : null
     return { monthsLeft, needMonthly, rate }
   }, [activeGoal, remain, series, now])
-
-  const nextMilestone = MILESTONES.find((mm) => mm > totalAssets)
-  const passed = MILESTONES.filter((mm) => totalAssets >= mm)
 
   return (
     <div>
@@ -161,24 +163,6 @@ export default function Stats() {
         )}
       </Card>
 
-      {/* 마일스톤 뱃지 */}
-      <Card className="mt-3.5">
-        <CardLabel>순자산 마일스톤</CardLabel>
-        <div className="flex gap-2 flex-wrap">
-          {MILESTONES.map((mm) => {
-            const ok = totalAssets >= mm
-            return (
-              <span key={mm} className={`text-[12px] font-bold px-2.5 py-1 rounded-full border ${ok ? 'bg-mint text-white border-mint' : 'bg-canvas text-sub border-line'}`}>
-                {ok ? '🏆 ' : '🔒 '}{compact(mm)}
-              </span>
-            )
-          })}
-        </div>
-        {nextMilestone && (
-          <div className="text-[12px] text-sub mt-2">다음 목표 <b className="text-ink">{compact(nextMilestone)}</b>까지 ₩{won(nextMilestone - totalAssets)} · 달성 {passed.length}/{MILESTONES.length}</div>
-        )}
-      </Card>
-
       {/* 순자산 추이 */}
       <Card className="mt-3.5">
         <CardLabel>순자산 추이(추정) · 최근 6개월</CardLabel>
@@ -220,31 +204,29 @@ export default function Stats() {
 }
 
 function GoalModal({ open, onClose, profileId, defaultFrom }: { open: boolean; onClose: () => void; profileId: string; defaultFrom: string }) {
-  const [label, setLabel] = useState('')
   const [amount, setAmount] = useState<number | null>(null)
   const [from, setFrom] = useState(defaultFrom)
   const [targetDate, setTargetDate] = useState('')
-  useEffect(() => { if (open) { setLabel(''); setAmount(null); setFrom(defaultFrom); setTargetDate('') } }, [open, defaultFrom])
+  useEffect(() => { if (open) { setAmount(null); setFrom(defaultFrom); setTargetDate('') } }, [open, defaultFrom])
 
   async function save() {
     if (!(Number(amount) > 0)) return
     const g: Goal = {
       id: uid(), profileId, targetAmount: amount!,
       targetDate: targetDate || undefined, effectiveFrom: from,
-      label: label.trim() || undefined, createdAt: new Date().toISOString(),
+      createdAt: new Date().toISOString(),
     }
     await repo.upsertGoal(g)
     onClose()
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="목표 추가 (스냅샷)">
+    <Modal open={open} onClose={onClose} title="목표 추가">
       <p className="text-[12px] text-sub mb-3">‘적용 시작월’부터 이 목표가 적용돼요. 이전 달은 이전 목표 기준으로 그대로 남습니다.</p>
-      <Field label="목표 이름"><input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="예: 2억 만들기" className={inputCls} /></Field>
-      <Field label="목표 금액 (원)"><AmountInput value={amount} onChange={setAmount} /></Field>
+      <Field label="목표 금액 (원)"><AmountInput value={amount} onChange={setAmount} autoFocus /></Field>
       <div className="grid grid-cols-2 gap-3">
-        <Field label="적용 시작월"><input type="month" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} /></Field>
-        <Field label="목표 시점(선택)"><input type="month" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={inputCls} /></Field>
+        <Field label="적용 시작월"><input type="month" min="2000-01" max="2100-12" value={from} onChange={(e) => setFrom(e.target.value)} className={inputCls} /></Field>
+        <Field label="목표 시점(선택)"><input type="month" min="2000-01" max="2100-12" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={inputCls} /></Field>
       </div>
       <div className="flex gap-2 mt-4 justify-end">
         <Button variant="line" onClick={onClose}>취소</Button>
