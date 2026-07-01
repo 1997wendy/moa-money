@@ -35,3 +35,10 @@ export const addMonth = (ym: string, delta: number): string => {
   const total = y * 12 + (m - 1) + delta
   return `${Math.floor(total / 12)}-${pad((total % 12) + 1)}`
 }
+
+/** 날짜(yyyy-mm-dd) 더하기/빼기 */
+export const addDays = (dateStr: string, n: number): string => {
+  const d = new Date(dateStr + 'T00:00')
+  d.setDate(d.getDate() + n)
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+}

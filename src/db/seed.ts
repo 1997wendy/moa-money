@@ -48,14 +48,7 @@ export async function seedIfEmpty() {
 
   // ---- 카테고리 ----
   const cats = [
-    { name: '식비', kind: 'expense' as const },
-    { name: '카페', kind: 'expense' as const },
-    { name: '교통', kind: 'expense' as const },
-    { name: '쇼핑', kind: 'expense' as const },
-    { name: '구독', kind: 'expense' as const },
-    { name: '의료', kind: 'expense' as const },
-    { name: '문화', kind: 'expense' as const },
-    { name: '여행', kind: 'expense' as const },
+    ...['식비', '교통', '통신', '쇼핑', '생활', '의료', '문화', '취미', '구독', '기타'].map((name) => ({ name, kind: 'expense' as const })),
     { name: '급여', kind: 'income' as const },
     { name: '기타수입', kind: 'income' as const },
   ]
@@ -110,7 +103,7 @@ export async function seedIfEmpty() {
   // ---- 거래 ----
   await db.transactions.bulkPut([
     tx(me, '2026-07-01', 'income', '급여', [{ category: '급여', amount: 4200000 }]),
-    tx(me, '2026-07-01', 'expense', '스타벅스 강남점', [{ category: '카페', amount: 6300 }], { cardId: kb, method: '국민 이지카드' }),
+    tx(me, '2026-07-01', 'expense', '스타벅스 강남점', [{ category: '식비', amount: 6300 }], { cardId: kb, method: '국민 이지카드' }),
     tx(me, '2026-07-01', 'expense', '배달의민족', [{ category: '식비', amount: 23000 }], {
       cardId: kb, method: '국민 이지카드',
       betterCardNote: '신한 딥드림(배달 5%)로 결제했으면 1,150원 아꼈어요.',
@@ -119,9 +112,9 @@ export async function seedIfEmpty() {
     tx(me, '2026-07-01', 'expense', '넷플릭스', [{ category: '구독', amount: 17000 }], { cardId: kb, method: '국민 이지카드', memo: '매월 반복' }),
     // N분 분할결제: 제주 여행 정산 12만 → 나·동생·엄마 4만씩
     tx(me, '2026-07-05', 'expense', '제주 여행 정산', [
-      { category: '여행', amount: 40000, note: '내 몫' },
-      { category: '여행', amount: 40000, owedBy: sibPerson, note: '동생 몫' },
-      { category: '여행', amount: 40000, owedBy: mom, note: '엄마 몫' },
+      { category: '문화', amount: 40000 },
+      { category: '문화', amount: 40000, owedBy: sibPerson },
+      { category: '문화', amount: 40000, owedBy: mom },
     ], { cardId: kb, method: '국민 이지카드' }),
     // 아빠 카드 정산 대상
     tx(me, '2026-06-30', 'expense', '쿠팡', [{ category: '쇼핑', amount: 48900, owedBy: dad }], { cardId: kb, method: '국민 이지카드' }),
