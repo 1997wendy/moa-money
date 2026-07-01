@@ -8,6 +8,7 @@ export interface Profile {
   id: ID
   name: string
   order: number
+  salary?: number // 연 총급여 (연말정산 계산용)
 }
 
 export type AssetType = 'cash' | 'account' | 'stock' | 'coin' | 'etc'
@@ -70,16 +71,29 @@ export interface Schedule {
   exceptions?: string[] // 이 날짜들은 반복에서 제외 (단일 회차 수정/삭제용)
 }
 
+/** 카드 혜택 규칙 (영역별) */
+export interface BenefitRule {
+  id: ID
+  area: string // 영역명 (편의점/배달/생활 등)
+  merchants: string[] // 매칭 키워드 (GS25, CU …)
+  kind: 'rate' | 'fixed' // 정률(%) / 정액(원, 건당)
+  value: number
+  cap?: number // 월 혜택 한도
+}
+
 /** 카드 (혜택·실적 규칙) */
 export interface Card {
   id: ID
   profileId: ID
   name: string
-  requiredSpend?: number // 실적 조건 금액
-  benefitCap?: number // 월 혜택 한도
-  rate?: number // 적립/할인율 %
-  area?: string // 혜택 영역 (배달/카페 등)
-  cycle?: 'prev-month' | 'this-month' // 실적 기준
+  type?: 'credit' | 'check' // 신용/체크 (연말정산 계산용)
+  requiredSpend?: number // 월 실적 조건 금액
+  benefits?: BenefitRule[] // 영역별 혜택 규칙
+  cycle?: 'prev-month' | 'this-month'
+  // legacy(구버전 데이터 호환)
+  benefitCap?: number
+  rate?: number
+  area?: string
 }
 
 /** 목표 (스냅샷 버전: effectiveFrom 월부터 적용) */

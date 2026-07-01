@@ -4,6 +4,7 @@ import { ChevronLeft, ChevronRight } from 'lucide-react'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
+import { adviceFor } from '../lib/cardAdvisor'
 import { Card, CardLabel, PageHeader, Empty, Fab } from '../components/ui'
 import TransactionModal from '../components/TransactionModal'
 import type { Transaction } from '../db/types'
@@ -20,6 +21,7 @@ export default function Ledger() {
 
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month }) : []), [profileId, month], [])
   const people = useLiveQuery(() => (profileId ? repo.listPeople(profileId) : []), [profileId], [])
+  const cards = useLiveQuery(() => (profileId ? repo.listCards(profileId) : []), [profileId], [])
   const personName = (id?: string | null) => people.find((p) => p.id === id)?.name
 
   // 합계 (정산=내 돈 아님 → 지출에서 제외)
@@ -110,6 +112,7 @@ export default function Ledger() {
             const hasOut = t.splits.some((s) => s.owedBy && s.owedDir === 'out')
             const myCost = t.type === 'expense' ? t.splits.filter((s) => !s.owedBy).reduce((a, s) => a + s.amount, 0) : t.amount
             const hasOwed = hasIn || hasOut
+            const advice = adviceFor(t, cards)
             return (
               <div key={t.id} onClick={() => openEdit(t)} className="py-3 border-b border-line last:border-0 cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition-colors">
                 <div className="flex items-center justify-between gap-2">
@@ -153,9 +156,9 @@ export default function Ledger() {
                   <div className="mt-2 text-[12px] text-sub bg-canvas rounded-lg px-3 py-1.5">📝 {t.memo}</div>
                 )}
 
-                {t.betterCardNote && (
+                {advice && (
                   <div className="mt-2 text-[12px] bg-mint-l text-mint-d rounded-lg px-3 py-1.5 border border-dashed border-mint">
-                    💡 {t.betterCardNote}
+                    💡 {advice}
                   </div>
                 )}
               </div>

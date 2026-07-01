@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, signed, compact, thisMonth, monthLabel } from '../lib/format'
+import { adviceFor } from '../lib/cardAdvisor'
 import { Card, CardLabel, PageHeader, Empty } from '../components/ui'
 
 export default function Dashboard() {
@@ -13,6 +14,7 @@ export default function Dashboard() {
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month }) : []), [profileId, month], [])
   const goal = useLiveQuery(() => (profileId ? repo.goalForMonth(profileId, month) : undefined), [profileId, month])
   const schedules = useLiveQuery(() => (profileId ? repo.listSchedules(profileId) : []), [profileId], [])
+  const cards = useLiveQuery(() => (profileId ? repo.listCards(profileId) : []), [profileId], [])
 
   const totalAssets = assets.reduce((s, a) => s + a.amount, 0)
 
@@ -43,8 +45,8 @@ export default function Dashboard() {
     .sort((a, b) => (a.date === b.date ? (a.time ?? '') < (b.time ?? '') ? -1 : 1 : a.date < b.date ? -1 : 1))
     .slice(0, 4)
 
-  // 결제수단 유의 안내 (자동 계산된 회고가 있는 거래)
-  const alerts = txs.filter((t) => t.betterCardNote)
+  // 결제수단 유의 안내 (카드 규칙 기반 자동 계산)
+  const alerts = txs.map((t) => ({ t, advice: adviceFor(t, cards) })).filter((x) => x.advice)
 
   return (
     <div>
@@ -116,13 +118,13 @@ export default function Dashboard() {
         {alerts.length === 0 ? (
           <Empty>잘못 쓴 결제수단이 없어요. 👍<br />(카드 혜택 규칙을 등록하면 더 정확히 알려드려요)</Empty>
         ) : (
-          alerts.map((t) => (
+          alerts.map(({ t, advice }) => (
             <div key={t.id} className="py-2.5 border-b border-line last:border-0">
               <div className="flex items-center justify-between">
                 <span className="text-[13.5px] font-semibold">{t.merchant}</span>
                 <span className="text-[13px] font-bold tnum text-expense">-{won(t.amount)}</span>
               </div>
-              <div className="text-[12px] text-[#c77700] mt-0.5">💡 {t.betterCardNote}</div>
+              <div className="text-[12px] text-[#c77700] mt-0.5">💡 {advice}</div>
             </div>
           ))
         )}

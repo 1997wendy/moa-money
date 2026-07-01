@@ -77,12 +77,17 @@ export async function seedIfEmpty() {
   const shinhan = uid()
   await db.cards.bulkPut([
     {
-      id: kb, profileId: me, name: '국민 이지카드',
-      requiredSpend: 300000, benefitCap: 10000, rate: 0.5, area: '전 가맹점', cycle: 'prev-month',
+      id: kb, profileId: me, name: '국민 이지카드', type: 'credit',
+      requiredSpend: 300000, cycle: 'prev-month',
+      benefits: [{ id: uid(), area: '생활', merchants: ['올리브영', '다이소'], kind: 'rate', value: 5, cap: 10000 }],
     },
     {
-      id: shinhan, profileId: me, name: '신한 딥드림',
-      requiredSpend: 400000, benefitCap: 15000, rate: 5, area: '배달', cycle: 'prev-month',
+      id: shinhan, profileId: me, name: '신한 딥드림', type: 'credit',
+      requiredSpend: 400000, cycle: 'prev-month',
+      benefits: [
+        { id: uid(), area: '배달', merchants: ['배달의민족', '요기요', '쿠팡이츠'], kind: 'rate', value: 5, cap: 15000 },
+        { id: uid(), area: '편의점', merchants: ['GS25', 'CU', '세븐일레븐'], kind: 'rate', value: 3, cap: 5000 },
+      ],
     },
   ])
 
@@ -106,7 +111,6 @@ export async function seedIfEmpty() {
     tx(me, '2026-07-01', 'expense', '스타벅스 강남점', [{ category: '식비', amount: 6300 }], { cardId: kb, method: '국민 이지카드' }),
     tx(me, '2026-07-01', 'expense', '배달의민족', [{ category: '식비', amount: 23000 }], {
       cardId: kb, method: '국민 이지카드',
-      betterCardNote: '신한 딥드림(배달 5%)로 결제했으면 1,150원 아꼈어요.',
     }),
     tx(me, '2026-07-01', 'expense', '카카오T', [{ category: '교통', amount: 11200 }], { cardId: shinhan, method: '신한 딥드림' }),
     tx(me, '2026-07-01', 'expense', '넷플릭스', [{ category: '구독', amount: 17000 }], { cardId: kb, method: '국민 이지카드', memo: '매월 반복' }),
