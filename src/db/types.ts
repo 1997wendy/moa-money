@@ -10,6 +10,7 @@ export interface Profile {
   order: number
   salary?: number // 연 총급여 (연말정산 계산용)
   hiddenMenus?: string[] // 이 프로필에서 숨길 메뉴 키
+  pinHash?: string // PIN 잠금(설정 시). 가벼운 잠금 — SHA-256 해시
 }
 
 /** 자산 (계좌·주식·코인 등). type = 세부분류 키(assets.ts SUBTYPES) */

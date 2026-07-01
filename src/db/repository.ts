@@ -32,6 +32,20 @@ export const repo = {
   listProfiles: () => db.profiles.orderBy('order').toArray(),
   upsertProfile: (p: Profile) => db.profiles.put(p),
   deleteProfile: (id: ID) => db.profiles.delete(id),
+  /** 프로필 + 그 프로필의 모든 데이터 삭제 (이 기기에서만) */
+  async deleteProfileCascade(id: ID) {
+    await Promise.all([
+      db.assets.where('profileId').equals(id).delete(),
+      db.transactions.where('profileId').equals(id).delete(),
+      db.schedules.where('profileId').equals(id).delete(),
+      db.cards.where('profileId').equals(id).delete(),
+      db.goals.where('profileId').equals(id).delete(),
+      db.people.where('profileId').equals(id).delete(),
+      db.recurring.where('profileId').equals(id).delete(),
+      db.categories.where('profileId').equals(id).delete(),
+    ])
+    await db.profiles.delete(id)
+  },
 
   // ---- Assets ----
   listAssets: (profileId: ID) =>

@@ -12,8 +12,8 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.svg'],
       manifest: {
-        name: '자산·일정 통합 앱',
-        short_name: '머니앱',
+        name: '모아 · 자산·일정 관리',
+        short_name: '모아',
         description: '내 자산·소비·투자·일정을 한 곳에서 관리',
         theme_color: '#0e9c8d',
         background_color: '#f5f7fa',

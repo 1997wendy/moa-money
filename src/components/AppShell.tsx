@@ -1,7 +1,8 @@
 // 좌측 사이드바(그룹화) + 사용자 전환 + 콘텐츠 영역
+import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
-  LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings,
+  LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useProfile } from '../state/profile'
@@ -39,13 +40,17 @@ const GROUPS: Group[] = [
 ]
 
 export default function AppShell() {
-  const { profiles, profileId, profile, setProfileId } = useProfile()
+  const { profiles, profileId, profile, setProfileId, isLocked } = useProfile()
   const hidden = new Set(profile?.hiddenMenus ?? [])
+  const locked = isLocked(profileId)
 
   return (
     <div className="flex min-h-full">
       <aside className="w-[212px] shrink-0 bg-surface border-r border-line flex flex-col fixed inset-y-0 left-0 overflow-y-auto">
-        <div className="px-5 py-4 font-extrabold text-[15px] tracking-tight">💰 머니앱</div>
+        <div className="px-5 py-4 flex items-center gap-2">
+          <span className="w-7 h-7 rounded-lg bg-mint text-white font-extrabold text-[15px] flex items-center justify-center">모</span>
+          <span className="font-extrabold text-[16px] tracking-tight">모아</span>
+        </div>
 
         <div className="px-3 mb-3">
           <div className="bg-mint-l rounded-[12px] p-3">
@@ -76,8 +81,39 @@ export default function AppShell() {
       </aside>
 
       <main className="flex-1 ml-[212px] px-7 pt-7 pb-28 max-w-[1000px]">
-        <Outlet />
+        {locked ? <LockScreen /> : <Outlet />}
       </main>
+    </div>
+  )
+}
+
+function LockScreen() {
+  const { profileId, profile, unlock } = useProfile()
+  const [pin, setPin] = useState('')
+  const [err, setErr] = useState(false)
+
+  async function tryUnlock() {
+    const ok = await unlock(profileId, pin)
+    if (!ok) { setErr(true); setPin('') }
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center py-24 text-center">
+      <div className="w-14 h-14 rounded-2xl bg-mint-l text-mint-d flex items-center justify-center mb-4"><Lock size={26} /></div>
+      <div className="text-[17px] font-bold mb-1">{profile?.name} 프로필이 잠겨 있어요</div>
+      <div className="text-[13px] text-sub mb-4">PIN을 입력하면 열려요.</div>
+      <input
+        type="password"
+        inputMode="numeric"
+        autoFocus
+        value={pin}
+        onChange={(e) => { setPin(e.target.value); setErr(false) }}
+        onKeyDown={(e) => e.key === 'Enter' && tryUnlock()}
+        placeholder="PIN"
+        className={`w-[200px] text-center tracking-[0.4em] text-[18px] border rounded-[10px] px-3 py-2.5 outline-none ${err ? 'border-expense' : 'border-line focus:border-mint'}`}
+      />
+      {err && <div className="text-[12px] text-expense mt-2">PIN이 맞지 않아요.</div>}
+      <button onClick={tryUnlock} className="mt-4 bg-mint text-white font-bold text-[14px] rounded-[10px] px-6 py-2.5 hover:bg-mint-d">열기</button>
     </div>
   )
 }
