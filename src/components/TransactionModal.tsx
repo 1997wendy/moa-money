@@ -9,8 +9,10 @@ import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { todayISO, won } from '../lib/format'
 import { EXPENSE_CATS, INCOME_CATS } from '../lib/categories'
+import { ruleMatches, ruleSaving } from '../lib/cardAdvisor'
 import type { Split, Transaction, TxType } from '../db/types'
 import { Modal, Field, inputCls, Button } from './ui'
+import { useToast } from './Toast'
 import AmountInput from './AmountInput'
 
 interface Props {
@@ -29,6 +31,7 @@ type DraftSplit = {
 
 export default function TransactionModal({ open, onClose, edit }: Props) {
   const { profileId } = useProfile()
+  const toast = useToast()
   const people = useLiveQuery(() => (profileId ? repo.listPeople(profileId) : []), [profileId], [])
   const cards = useLiveQuery(() => (profileId ? repo.listCards(profileId) : []), [profileId], [])
 
@@ -127,7 +130,29 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       createdAt: edit?.createdAt ?? new Date().toISOString(),
     }
     await repo.upsertTransaction(t)
+    await notifyCardMilestones(t)
     onClose()
+  }
+
+  // 결제 저장 후 실적/혜택 한도 달성이면 토스트
+  async function notifyCardMilestones(t: Transaction) {
+    if (t.type !== 'expense' || !t.cardId) return
+    const card = cards.find((c) => c.id === t.cardId)
+    if (!card) return
+    const monthTxs = await repo.listTransactions(profileId, { month: t.date.slice(0, 7) })
+    const cardTxs = monthTxs.filter((x) => x.type === 'expense' && x.cardId === card.id)
+    const after = cardTxs.reduce((a, x) => a + x.amount, 0)
+    const before = after - t.amount
+    if (card.requiredSpend && before < card.requiredSpend && after >= card.requiredSpend) {
+      toast(`🎉 ${card.name} 실적 달성!`)
+    }
+    for (const r of card.benefits ?? []) {
+      if (!r.cap) continue
+      const matched = cardTxs.filter((x) => ruleMatches(r, x.merchant))
+      const usedAfter = matched.reduce((a, x) => a + ruleSaving(r, x.amount), 0)
+      const usedBefore = matched.filter((x) => x.id !== t.id).reduce((a, x) => a + ruleSaving(r, x.amount), 0)
+      if (usedBefore < r.cap && usedAfter >= r.cap) toast(`💳 ${card.name} ${r.area} 혜택 한도 달성`)
+    }
   }
 
   return (

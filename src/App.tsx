@@ -1,5 +1,6 @@
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { ProfileProvider } from './state/profile'
+import { ToastProvider } from './components/Toast'
 import AppShell from './components/AppShell'
 import Dashboard from './screens/Dashboard'
 import Ledger from './screens/Ledger'
@@ -34,7 +35,9 @@ const router = createBrowserRouter([
 export default function App() {
   return (
     <ProfileProvider>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <RouterProvider router={router} />
+      </ToastProvider>
     </ProfileProvider>
   )
 }

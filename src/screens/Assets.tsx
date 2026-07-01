@@ -7,6 +7,7 @@ import { won } from '../lib/format'
 import {
   SUBTYPES, GROUPS, BANKS, SECURITIES, CURRENCIES, subOf, groupOf, krwValue,
 } from '../lib/assets'
+import { fetchCoinPricesKRW, isSupportedCoin } from '../lib/coingecko'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
 import type { Asset } from '../db/types'
@@ -18,6 +19,24 @@ export default function Assets() {
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Asset | undefined>()
+  const [msg, setMsg] = useState('')
+  const [loadingCoin, setLoadingCoin] = useState(false)
+
+  const coinAssets = assets.filter((a) => a.type === 'coin' && a.quantity && isSupportedCoin(a.ticker))
+  async function refreshCoins() {
+    if (coinAssets.length === 0) { setMsg('갱신할 코인이 없어요 (지원 티커 BTC·ETH 등 + 수량 필요).'); return }
+    setLoadingCoin(true)
+    try {
+      const prices = await fetchCoinPricesKRW(coinAssets.map((a) => a.ticker!))
+      let n = 0
+      for (const a of coinAssets) {
+        const p = prices[a.ticker!.toUpperCase()]
+        if (p) { await repo.upsertAsset({ ...a, unitPrice: p, amount: Math.round(a.quantity! * p), updatedAt: new Date().toISOString() }); n++ }
+      }
+      setMsg(`${n}개 코인 시세를 갱신했어요.`)
+    } catch { setMsg('⚠️ 시세를 불러오지 못했어요.') }
+    setLoadingCoin(false)
+  }
 
   const total = assets.reduce((s, a) => s + krwValue(a), 0)
   const fxTotal = assets.filter((a) => a.currency && a.currency !== 'KRW').reduce((s, a) => s + krwValue(a), 0)
@@ -32,7 +51,16 @@ export default function Assets() {
 
   return (
     <div>
-      <PageHeader title="자산" desc="은행·현금·투자·보험 통합 · 외화는 원화로 환산" />
+      <PageHeader
+        title="자산"
+        desc="은행·현금·투자·보험 통합 · 외화는 원화로 환산"
+        right={coinAssets.length > 0 ? (
+          <button onClick={refreshCoins} disabled={loadingCoin} className="text-[12px] font-bold text-mint-d flex items-center gap-1 border border-line rounded-lg px-2.5 py-2 hover:bg-canvas disabled:opacity-40">
+            <RefreshCw size={13} className={loadingCoin ? 'animate-spin' : ''} /> 코인 시세 갱신
+          </button>
+        ) : undefined}
+      />
+      {msg && <div className="mb-3 text-[13px] bg-mint-l text-mint-d rounded-lg px-4 py-2.5">{msg}</div>}
 
       <Card>
         <CardLabel>자산 구성 · 총 ₩{won(total)}{fxTotal > 0 ? ` (외화 환산 ₩${won(fxTotal)} 포함)` : ''}</CardLabel>
@@ -68,7 +96,7 @@ export default function Assets() {
                     <div className="min-w-0">
                       <div className="text-[13.5px] font-semibold truncate">{a.name}</div>
                       <div className="text-[11px] text-sub">
-                        {subOf(a.type).label}{a.institution ? ` · ${a.institution}` : ''}
+                        {subOf(a.type).label}{a.market ? ` · ${a.market === 'us' ? '해외' : '국내'}` : ''}{a.institution ? ` · ${a.institution}` : ''}
                         {a.quantity != null ? ` · ${a.quantity}${a.ticker ? ` ${a.ticker}` : ''}` : ''}
                       </div>
                     </div>
@@ -107,6 +135,7 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [name, setName] = useState('')
   const [inst, setInst] = useState('')
   const [instCustom, setInstCustom] = useState(false)
+  const [market, setMarket] = useState<'kr' | 'us'>('kr')
   const [currency, setCurrency] = useState('KRW')
   const [fxRate, setFxRate] = useState('')
   const [amount, setAmount] = useState<number | null>(null)
@@ -115,15 +144,17 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [loadingFx, setLoadingFx] = useState(false)
 
   const sub = subOf(type)
+  const isStockEtf = sub.key === 'stock' || sub.key === 'etf'
 
   useEffect(() => {
     if (!open) return
     if (edit) {
       setType(edit.type); setName(edit.name); setInst(edit.institution ?? ''); setInstCustom(false)
+      setMarket(edit.market ?? 'kr')
       setCurrency(edit.currency ?? 'KRW'); setFxRate(edit.fxRate ? String(edit.fxRate) : '')
       setAmount(edit.amount); setQuantity(edit.quantity != null ? String(edit.quantity) : ''); setTicker(edit.ticker ?? '')
     } else {
-      setType('checking'); setName(''); setInst(''); setInstCustom(false)
+      setType('checking'); setName(''); setInst(''); setInstCustom(false); setMarket('kr')
       setCurrency('KRW'); setFxRate(''); setAmount(null); setQuantity(''); setTicker('')
     }
   }, [open, edit])
@@ -148,6 +179,7 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       currency: currency === 'KRW' ? undefined : currency,
       fxRate: foreign && Number(fxRate) ? Number(fxRate) : undefined,
       institution: instList && inst ? inst : (instCustom && inst ? inst : undefined),
+      market: isStockEtf ? market : undefined,
       quantity: sub.qty && quantity ? Number(quantity) : undefined,
       unitPrice: sub.qty && quantity && Number(quantity) > 0 ? amount! / Number(quantity) : undefined,
       ticker: sub.qty && ticker.trim() ? ticker.trim() : undefined,
@@ -170,6 +202,16 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       </Field>
 
       <Field label="이름"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 주거래 통장 / 애플" className={inputCls} /></Field>
+
+      {isStockEtf && (
+        <Field label="국내 / 해외">
+          <div className="flex gap-1.5">
+            {(['kr', 'us'] as const).map((mk) => (
+              <button key={mk} onClick={() => setMarket(mk)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${market === mk ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{mk === 'kr' ? '국내' : '해외'}</button>
+            ))}
+          </div>
+        </Field>
+      )}
 
       {instList && (
         <Field label={sub.inst === 'bank' ? '은행' : '증권사'}>

@@ -24,6 +24,8 @@ export interface Asset {
   currency?: string // 'KRW' | 'USD' | 'JPY' | 'VND' (기본 KRW)
   fxRate?: number // 외화 1단위 → 원화 환율
   institution?: string // 은행/증권사
+  market?: 'kr' | 'us' // 주식/ETF 국내(kr)/해외(us)
+  targetPrice?: number // 내가 정한 목표가 (참고)
   quantity?: number // 투자자산 보유 수량
   unitPrice?: number // 단가
   ticker?: string // 종목 코드
