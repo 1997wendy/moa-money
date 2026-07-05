@@ -4,6 +4,7 @@ import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
 import { pushNow, pullForce } from '../lib/cloudSync'
+import { initEmptyAccount } from '../db/seed'
 import { useNavigate } from 'react-router-dom'
 import { createShare, listMyShares, revokeShare, listSharedToMe, SHARE_MENUS, type Share, type MenuPerm, type MenuPerms } from '../lib/sharing'
 import { hashPin } from '../lib/pin'
@@ -227,12 +228,14 @@ function CloudSection() {
     setNewPw('')
     setMsg(error ? '변경 실패: ' + error.message : '비밀번호를 변경했어요.')
   }
-  async function deleteCloud() {
-    if (!confirm('클라우드에 저장된 데이터를 삭제하고 로그아웃할까요? (이 기기의 로컬 데이터는 그대로 남아요)')) return
-    const { data: { user } } = await supabase.auth.getUser()
-    if (user) await supabase.from('backups').delete().eq('user_id', user.id)
-    await supabase.auth.signOut()
-    setMsg('클라우드 데이터를 삭제하고 로그아웃했어요.')
+  async function resetData() {
+    if (!confirm('내 모든 데이터를 지우고 빈 상태로 초기화할까요? (로컬·클라우드 모두, 되돌릴 수 없음)')) return
+    setBusy(true)
+    await repo.wipeLocal()
+    await initEmptyAccount()
+    await pushNow()
+    setMsg('초기화했어요. 새로고침할게요…')
+    setTimeout(() => location.reload(), 700)
   }
 
   async function upload() {
@@ -291,7 +294,7 @@ function CloudSection() {
               <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="새 비밀번호(6자+)" className={inputCls + ' flex-1'} />
               <Button variant="line" onClick={changePw}>변경</Button>
             </div>
-            <button onClick={deleteCloud} className="text-[12px] text-expense hover:underline mt-3">클라우드 데이터 삭제 · 로그아웃</button>
+            <button onClick={resetData} className="text-[12px] text-expense hover:underline mt-3">내 데이터 초기화 (빈 상태로)</button>
           </div>
         </>
       )}
