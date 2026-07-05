@@ -328,6 +328,14 @@ function ShareSection() {
     else setMsg('공유 실패. 상대 이메일/네트워크를 확인하세요.')
   }
   async function revoke(id: string) { if (!confirm('이 공유를 취소할까요?')) return; await revokeShare(id); refresh() }
+  function loadShare(s: Share) {
+    setTarget(s.target_email)
+    setPerms({ ...defaultPerms(), ...(s.menu_perms ?? {}) })
+    const p = profiles.find((x) => x.name === s.profile_name)
+    if (p) setProfileId(p.id)
+    setMsg('불러왔어요. 권한을 바꾼 뒤 «공유 만들기»를 다시 누르면 갱신돼요.')
+    window.scrollTo(0, 0)
+  }
 
   const summary = (s: Share) => {
     const mp = s.menu_perms ?? {}
@@ -377,11 +385,11 @@ function ShareSection() {
         {shares.length === 0 ? <p className="text-[13px] text-sub">아직 공유한 게 없어요.</p> : (
           shares.map((s) => (
             <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
-              <div>
+              <button onClick={() => loadShare(s)} className="text-left flex-1 min-w-0 hover:opacity-70">
                 <div className="text-[13.5px] font-semibold">{s.profile_name} → {s.target_email}</div>
-                <div className="text-[11px] text-sub">{summary(s)}</div>
-              </div>
-              <button onClick={() => revoke(s.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
+                <div className="text-[11px] text-sub">{summary(s)} · 눌러서 수정</div>
+              </button>
+              <button onClick={() => revoke(s.id)} className="text-sub hover:text-expense p-1 shrink-0"><Trash2 size={16} /></button>
             </div>
           ))
         )}

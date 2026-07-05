@@ -5,8 +5,10 @@ import {
   LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock, LineChart,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
+import { Share2 } from 'lucide-react'
 import { useProfile } from '../state/profile'
 import { useSyncManager } from '../hooks/useSyncManager'
+import { useSharedToMe } from '../hooks/useSharedToMe'
 import Logo from './Logo'
 
 interface Item { key: string; to: string; label: string; icon: LucideIcon; end?: boolean; hideable?: boolean }
@@ -46,6 +48,7 @@ const GROUPS: Group[] = [
 export default function AppShell() {
   const { profiles, profileId, profile, setProfileId, isLocked } = useProfile()
   useSyncManager()
+  const { shares } = useSharedToMe()
   const hidden = new Set(profile?.hiddenMenus ?? [])
   const locked = isLocked(profileId)
 
@@ -78,6 +81,17 @@ export default function AppShell() {
             )
           })}
         </nav>
+
+        {shares.length > 0 && (
+          <div className="px-3 pb-1">
+            <div className="text-[10.5px] font-bold text-sub/70 px-3 pt-2 pb-1 uppercase tracking-wide">공유받음</div>
+            {shares.map((s) => (
+              <NavLink key={s.id} to={`/shared/${s.id}`} className={({ isActive }) => `flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-[13.5px] font-semibold mb-0.5 transition-colors ${isActive ? 'bg-mint text-white' : 'text-sub hover:bg-canvas hover:text-ink'}`}>
+                <Share2 size={16} />{s.profile_name}
+              </NavLink>
+            ))}
+          </div>
+        )}
 
         <div className="px-3 pb-2 border-t border-line pt-2">
           <NavItem item={{ key: 'settings', to: '/settings', label: '설정', icon: Settings }} />

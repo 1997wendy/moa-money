@@ -12,6 +12,7 @@ import Cards from './screens/Cards'
 import Settings from './screens/Settings'
 import Import from './screens/Import'
 import Investment from './screens/Investment'
+import SharedView from './screens/SharedView'
 
 const router = createBrowserRouter([
   {
@@ -28,6 +29,7 @@ const router = createBrowserRouter([
       { path: 'invest', element: <Investment /> },
       { path: 'cards', element: <Cards /> },
       { path: 'settings', element: <Settings /> },
+      { path: 'shared/:id', element: <SharedView /> },
     ],
   },
 ])
