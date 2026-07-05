@@ -9,6 +9,7 @@ import type {
   Category,
   CoachNote,
   Goal,
+  MonthNote,
   Person,
   Profile,
   RecurringReceivable,
@@ -27,6 +28,7 @@ export class MoneyDB extends Dexie {
   recurring!: Table<RecurringReceivable, string>
   categories!: Table<Category, string>
   coachNotes!: Table<CoachNote, string>
+  monthNotes!: Table<MonthNote, string>
 
   constructor() {
     super('money-app')
@@ -43,6 +45,9 @@ export class MoneyDB extends Dexie {
     })
     this.version(2).stores({
       coachNotes: 'id, profileId, date',
+    })
+    this.version(3).stores({
+      monthNotes: 'id, profileId, month',
     })
   }
 }

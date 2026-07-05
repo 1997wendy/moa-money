@@ -136,6 +136,15 @@ export interface RecurringReceivable {
   paidMonths?: string[] // 정산 완료한 월 목록 (yyyy-mm)
 }
 
+/** 월별 회고 메모 (이번 달 뭘 잘/못했나) */
+export interface MonthNote {
+  id: ID // `${profileId}::${month}`
+  profileId: ID
+  month: string // yyyy-mm
+  content: string
+  updatedAt: string
+}
+
 /** 투자 코칭 기록 (날짜별 히스토리) */
 export interface CoachNote {
   id: ID

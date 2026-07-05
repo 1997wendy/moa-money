@@ -128,6 +128,11 @@ export default function Stats() {
         <button onClick={() => setMonth(addMonth(month, 1))} className="p-1.5 rounded-lg hover:bg-line/60 text-sub"><ChevronRight size={18} /></button>
       </div>
 
+      <Card className="mb-3.5">
+        <CardLabel>📝 {monthLabel(month)} 회고</CardLabel>
+        <MonthMemo profileId={profileId} month={month} />
+      </Card>
+
       {/* 핵심 지표 */}
       <div className="grid grid-cols-3 gap-3.5">
         <Card>
@@ -294,5 +299,22 @@ function GoalModal({ open, onClose, profileId, defaultFrom }: { open: boolean; o
         <Button onClick={save}>저장</Button>
       </div>
     </Modal>
+  )
+}
+
+function MonthMemo({ profileId, month }: { profileId: string; month: string }) {
+  const note = useLiveQuery(() => (profileId ? repo.getMonthNote(profileId, month) : undefined), [profileId, month])
+  const [text, setText] = useState('')
+  const [editing, setEditing] = useState(false)
+  useEffect(() => { if (!editing) setText(note?.content ?? '') }, [note, editing, month])
+  return (
+    <textarea
+      value={text}
+      onFocus={() => setEditing(true)}
+      onChange={(e) => setText(e.target.value)}
+      onBlur={() => { setEditing(false); repo.upsertMonthNote(profileId, month, text) }}
+      placeholder="이번 달 뭘 잘했고, 뭘 아쉬웠나요? 다음 달엔 뭘 바꿀지… (칸 밖 누르면 자동 저장)"
+      className={inputCls + ' h-28 resize-none leading-relaxed'}
+    />
   )
 }
