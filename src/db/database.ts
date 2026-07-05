@@ -48,3 +48,20 @@ export class MoneyDB extends Dexie {
 }
 
 export const db = new MoneyDB()
+
+// 로컬 변경 감지 → 자동 동기화 트리거 (가져오기 중엔 억제)
+function markDirty() {
+  const w = window as unknown as { __moaSuppressDirty?: boolean }
+  if (w.__moaSuppressDirty) return
+  try {
+    localStorage.setItem('moa.dirtyAt', String(Date.now()))
+    window.dispatchEvent(new Event('moa:changed'))
+  } catch {
+    /* ignore */
+  }
+}
+db.tables.forEach((t) => {
+  t.hook('creating', () => { markDirty() })
+  t.hook('updating', () => { markDirty() })
+  t.hook('deleting', () => { markDirty() })
+})

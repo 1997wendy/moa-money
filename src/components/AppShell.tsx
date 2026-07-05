@@ -6,6 +6,7 @@ import {
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useProfile } from '../state/profile'
+import { useSyncManager } from '../hooks/useSyncManager'
 import Logo from './Logo'
 
 interface Item { key: string; to: string; label: string; icon: LucideIcon; end?: boolean; hideable?: boolean }
@@ -44,6 +45,7 @@ const GROUPS: Group[] = [
 
 export default function AppShell() {
   const { profiles, profileId, profile, setProfileId, isLocked } = useProfile()
+  useSyncManager()
   const hidden = new Set(profile?.hiddenMenus ?? [])
   const locked = isLocked(profileId)
 

@@ -3,6 +3,7 @@ import { Download, Upload, Trash2, Plus, Cloud } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
+import { pushNow, pullForce } from '../lib/cloudSync'
 import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
@@ -229,25 +230,17 @@ function CloudSection() {
 
   async function upload() {
     setBusy(true)
-    try {
-      const { data: { user } } = await supabase.auth.getUser()
-      if (!user) return
-      const payload = await repo.exportAll()
-      const { error } = await supabase.from('backups').upsert({ user_id: user.id, data: payload, updated_at: new Date().toISOString() })
-      setMsg(error ? '업로드 실패: ' + error.message : '☁️ 클라우드에 올렸어요.')
-    } finally { setBusy(false) }
+    const r = await pushNow()
+    setBusy(false)
+    setMsg(r === 'ok' ? '☁️ 클라우드에 올렸어요.' : '업로드 실패')
   }
   async function download() {
     if (!confirm('클라우드 데이터로 이 기기를 덮어씁니다. 계속할까요?')) return
     setBusy(true)
-    try {
-      const { data, error } = await supabase.from('backups').select('data').maybeSingle()
-      if (error) return setMsg('다운로드 실패: ' + error.message)
-      if (!data) return setMsg('클라우드에 저장된 데이터가 없어요. 먼저 올리기를 하세요.')
-      await repo.importAll((data as { data: Record<string, unknown> }).data)
-      setMsg('받았어요. 새로고침할게요…')
-      setTimeout(() => location.reload(), 800)
-    } finally { setBusy(false) }
+    const r = await pullForce()
+    setBusy(false)
+    if (r === 'pulled') { setMsg('받았어요. 새로고침할게요…'); setTimeout(() => location.reload(), 800) }
+    else setMsg('클라우드에 저장된 데이터가 없어요. 먼저 올리기를 하세요.')
   }
 
   return (
@@ -275,10 +268,14 @@ function CloudSection() {
             <div className="flex-1" />
             <button onClick={logout} className="text-[12px] text-sub hover:text-ink">로그아웃</button>
           </div>
-          <div className="text-[12px] text-sub mb-2">클라우드 최신 저장: {cloudAt ? new Date(cloudAt).toLocaleString('ko-KR') : '없음'}</div>
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[11px] font-bold text-mint-d bg-mint-l px-2 py-0.5 rounded-full">⟳ 자동 동기화 켜짐</span>
+            <span className="text-[12px] text-sub">최신 저장 {cloudAt ? new Date(cloudAt).toLocaleString('ko-KR') : '없음'}</span>
+          </div>
+          <p className="text-[12px] text-sub mb-2">데이터가 바뀌면 자동으로 올라가고, 다른 기기에서 열면 자동으로 최신을 받아와요. 아래 버튼은 즉시 실행·문제 정리용이에요.</p>
           <div className="flex gap-2">
-            <Button onClick={upload} disabled={busy}><Upload size={14} className="inline -mt-0.5 mr-1" />올리기(백업)</Button>
-            <Button variant="line" onClick={download} disabled={busy}><Download size={14} className="inline -mt-0.5 mr-1" />받기(복원)</Button>
+            <Button onClick={upload} disabled={busy}><Upload size={14} className="inline -mt-0.5 mr-1" />지금 올리기</Button>
+            <Button variant="line" onClick={download} disabled={busy}><Download size={14} className="inline -mt-0.5 mr-1" />클라우드로 덮어쓰기</Button>
           </div>
 
           <div className="mt-4 pt-3 border-t border-line">
