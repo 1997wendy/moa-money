@@ -76,7 +76,7 @@ export default function Assets() {
                         {a.quantity != null ? ` · ${a.quantity}${a.ticker ? ` ${a.ticker}` : '주'}` : ''}
                         {a.rate ? ` · ${a.rate}%${a.maturity ? ` ~${a.maturity.slice(2)}` : ' 무기한'}` : ''}
                       </div>
-                      {interest && <div className="text-[11px] text-mint-d">💰 예상이자 ≈ ₩{won(interest.annual)}/년{interest.toMaturity ? ` · 만기까지 ₩${won(interest.toMaturity)}` : ''}</div>}
+                      {interest && <div className="text-[11px] text-mint-d">💰 세후이자 ≈ ₩{won(interest.annualNet)}/년{interest.toMaturityNet ? ` · 만기까지 ₩${won(interest.toMaturityNet)}` : ''}</div>}
                       {pnl && <div className={`text-[11px] ${pnl.profit >= 0 ? 'text-income' : 'text-expense'}`}>{pnl.profit >= 0 ? '▲' : '▼'} {pnl.pct >= 0 ? '+' : ''}{pnl.pct.toFixed(1)}% ({symbolOf(a.currency)}{won(Math.abs(pnl.profit))})</div>}
                     </div>
                     <div className="text-right shrink-0">
@@ -189,7 +189,9 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const krwPreview = foreign && amount && Number(fxRate) ? Math.round(amount * Number(fxRate)) : null
   const pnlPreview = sub.qty && Number(quantity) > 0 && Number(avgPrice) > 0 && amount != null
     ? { principal: Number(quantity) * Number(avgPrice), profit: amount - Number(quantity) * Number(avgPrice) } : null
-  const interestPreview = sub.rate && Number(rate) > 0 && amount ? Math.round((amount * Number(rate)) / 100) : 0
+  const interestObj = sub.rate && Number(rate) > 0 && amount
+    ? expectedInterest({ amount, rate: Number(rate), maturity: noMaturity ? undefined : (maturity || undefined) } as Asset)
+    : null
 
   async function save() {
     if (!name.trim()) return
@@ -346,10 +348,11 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
           <label className="flex items-center gap-2 text-[12.5px] text-sub -mt-1 mb-2 cursor-pointer">
             <input type="checkbox" checked={noMaturity} onChange={(e) => setNoMaturity(e.target.checked)} /> 만기 없음(무제한)
           </label>
-          {interestPreview > 0 && (
+          {interestObj && (
             <div className="text-[12px] bg-mint-l text-mint-d rounded-lg px-3 py-2 mb-2">
-              💰 예상이자(세전·근사) ≈ <b>₩{won(interestPreview)}/년</b>
-              {!noMaturity && maturity && (() => { const m = expectedInterest({ ...({} as Asset), amount: amount ?? 0, rate: Number(rate), maturity }); return m?.toMaturity ? <> · 만기까지 약 <b>₩{won(m.toMaturity)}</b></> : null })()}
+              💰 세후 예상이자 ≈ <b>₩{won(interestObj.annualNet)}/년</b>
+              {interestObj.toMaturityNet != null && <> · 만기까지 <b>₩{won(interestObj.toMaturityNet)}</b></>}
+              <div className="text-[10.5px] text-sub mt-0.5">세전 ₩{won(interestObj.annual)}/년 · 이자소득세 15.4% 반영{savingKind === 'installment' ? ' · 적금은 근사치예요' : ''}</div>
             </div>
           )}
         </>

@@ -101,10 +101,10 @@ export default function Ledger() {
       </div>
 
       {/* 합계 */}
-      <div className="grid grid-cols-3 gap-3.5 mb-4">
-        <Card><CardLabel>지출 합계</CardLabel><div className="text-[19px] font-extrabold tnum text-expense">-{won(totals.expense)}</div></Card>
-        <Card><CardLabel>수입 합계</CardLabel><div className="text-[19px] font-extrabold tnum text-income">+{won(totals.income)}</div></Card>
-        <Card><CardLabel>순수익</CardLabel><div className="text-[19px] font-extrabold tnum">{signed(totals.net)}</div></Card>
+      <div className="grid grid-cols-3 gap-2 md:gap-3.5 mb-4">
+        <Card><CardLabel>지출 합계</CardLabel><div className="text-[14px] md:text-[19px] font-extrabold tnum text-expense">-{won(totals.expense)}</div></Card>
+        <Card><CardLabel>수입 합계</CardLabel><div className="text-[14px] md:text-[19px] font-extrabold tnum text-income">+{won(totals.income)}</div></Card>
+        <Card><CardLabel>순수익</CardLabel><div className="text-[14px] md:text-[19px] font-extrabold tnum">{signed(totals.net)}</div></Card>
       </div>
 
       {/* 지출 모아보기: 카테고리별 그룹 */}

@@ -142,20 +142,20 @@ export default function Stats() {
       </Card>
 
       {/* 핵심 지표 */}
-      <div className="grid grid-cols-3 gap-3.5">
+      <div className="grid grid-cols-3 gap-2 md:gap-3.5">
         <Card>
           <CardLabel>{monthLabel(month)} 자산 증감(추정)</CardLabel>
-          <div className={`text-[20px] font-extrabold tnum ${selNet.net >= 0 ? 'text-mint-d' : 'text-expense'}`}>{selNet.net >= 0 ? '+' : ''}{selPct.toFixed(1)}%</div>
+          <div className={`text-[16px] md:text-[20px] font-extrabold tnum ${selNet.net >= 0 ? 'text-mint-d' : 'text-expense'}`}>{selNet.net >= 0 ? '+' : ''}{selPct.toFixed(1)}%</div>
           <div className="text-[12px] text-sub tnum">{signed(selNet.net)}</div>
         </Card>
         <Card>
           <CardLabel>연간(YoY) 증감</CardLabel>
-          <div className={`text-[20px] font-extrabold tnum ${yoyAmt >= 0 ? 'text-mint-d' : 'text-expense'}`}>{yoyAmt >= 0 ? '+' : ''}{yoyPct.toFixed(1)}%</div>
+          <div className={`text-[16px] md:text-[20px] font-extrabold tnum ${yoyAmt >= 0 ? 'text-mint-d' : 'text-expense'}`}>{yoyAmt >= 0 ? '+' : ''}{yoyPct.toFixed(1)}%</div>
           <div className="text-[12px] text-sub tnum">{signed(yoyAmt)}</div>
         </Card>
         <Card>
           <CardLabel>{monthLabel(month)} 저축률</CardLabel>
-          <div className="text-[20px] font-extrabold tnum">{selSaveRate.toFixed(0)}%</div>
+          <div className="text-[16px] md:text-[20px] font-extrabold tnum">{selSaveRate.toFixed(0)}%</div>
           <div className="text-[12px] text-sub">수입 대비 저축 비율</div>
         </Card>
       </div>

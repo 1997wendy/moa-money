@@ -62,19 +62,19 @@ export default function Dashboard() {
     <div>
       <PageHeader title="대시보드" desc={`${monthLabel(month)} · 한눈에 보는 내 자산`} />
 
-      <div className="grid grid-cols-3 gap-3.5">
-        <Card>
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+        <Card className="col-span-2 md:col-span-1">
           <CardLabel>총 자산</CardLabel>
-          <div className="text-[26px] font-extrabold tnum">₩ {won(totalAssets)}</div>
+          <div className="text-[22px] md:text-[26px] font-extrabold tnum">₩ {won(totalAssets)}</div>
           <div className="text-[12px] text-sub mt-1">{assets.length}개 자산 합산</div>
         </Card>
         <Card>
           <CardLabel>이번 달 수입</CardLabel>
-          <div className="text-[24px] font-extrabold tnum text-income">+{won(income)}</div>
+          <div className="text-[17px] md:text-[24px] font-extrabold tnum text-income">+{won(income)}</div>
         </Card>
         <Card>
           <CardLabel>이번 달 지출</CardLabel>
-          <div className="text-[24px] font-extrabold tnum text-expense">-{won(expense)}</div>
+          <div className="text-[17px] md:text-[24px] font-extrabold tnum text-expense">-{won(expense)}</div>
           <div className="text-[12px] text-sub mt-1">순수익 {signed(net)}</div>
         </Card>
       </div>

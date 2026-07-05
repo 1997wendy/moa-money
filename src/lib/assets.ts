@@ -72,16 +72,25 @@ export function investPnl(a: Asset): { principal: number; profit: number; pct: n
   return { principal, profit, pct: (profit / principal) * 100 }
 }
 
-/** 예적금 예상이자 (세전·단순 근사). 원화 기준. */
-export function expectedInterest(a: Asset): { annual: number; toMaturity?: number; monthsLeft?: number } | null {
+// 이자소득세 15.4% (이자소득세 14% + 지방소득세 1.4%)
+export const INTEREST_TAX = 0.154
+
+/**
+ * 예적금 예상이자 (단순 근사). 원화 기준.
+ * annual=연 이자(세전), annualNet=세후. 만기 있으면 toMaturity(세전)/toMaturityNet(세후).
+ * ※ 적금은 잔액이 매월 늘어 실제론 더 적음 → 대략치.
+ */
+export function expectedInterest(a: Asset): { annual: number; annualNet: number; toMaturity?: number; toMaturityNet?: number; monthsLeft?: number } | null {
   if (!a.rate || a.rate <= 0) return null
   const bal = krwValue(a)
   if (bal <= 0) return null
+  const net = (v: number) => Math.round(v * (1 - INTEREST_TAX))
   const annual = Math.round((bal * a.rate) / 100)
-  if (!a.maturity) return { annual }
+  if (!a.maturity) return { annual, annualNet: net(annual) }
   const today = todayISO()
   const [ny, nm] = today.split('-').map(Number)
   const [my, mm] = a.maturity.split('-').map(Number)
   const monthsLeft = Math.max(0, (my - ny) * 12 + (mm - nm))
-  return { annual, monthsLeft, toMaturity: Math.round((annual * monthsLeft) / 12) }
+  const toMaturity = Math.round((annual * monthsLeft) / 12)
+  return { annual, annualNet: net(annual), monthsLeft, toMaturity, toMaturityNet: net(toMaturity) }
 }
