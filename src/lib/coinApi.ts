@@ -1,40 +1,34 @@
-// 코인 검색·시세 (업비트 KRW 마켓, 키 불필요)
-export interface CoinHit { ticker: string; korean: string; english: string }
-
-let cache: CoinHit[] | null = null
-
-async function loadMarkets(): Promise<CoinHit[]> {
-  if (cache) return cache
-  try {
-    const ctrl = new AbortController()
-    const timer = setTimeout(() => ctrl.abort(), 8000)
-    const r = await fetch('https://api.upbit.com/v1/market/all', { signal: ctrl.signal })
-    clearTimeout(timer)
-    const j = await r.json() as { market: string; korean_name: string; english_name: string }[]
-    const list = j.filter((m) => m.market.startsWith('KRW-')).map((m) => ({
-      ticker: m.market.replace('KRW-', ''), korean: m.korean_name, english: m.english_name,
-    }))
-    if (list.length > 0) cache = list // 실패 시 캐시하지 않아 다음에 재시도
-    return list
-  } catch { return [] }
-}
+// 코인 검색·시세 (CoinGecko, 키 불필요·CORS 허용). id 기준으로 조회.
+export interface CoinHit { id: string; symbol: string; name: string }
 
 export async function searchCoins(q: string): Promise<CoinHit[]> {
   const query = q.trim()
   if (!query) return []
-  const list = await loadMarkets()
-  const s = query.toLowerCase()
-  return list
-    .filter((c) => c.ticker.toLowerCase().includes(s) || c.korean.includes(query) || c.english.toLowerCase().includes(s))
-    .slice(0, 15)
+  try {
+    const r = await fetch(`https://api.coingecko.com/api/v3/search?query=${encodeURIComponent(query)}`)
+    const j = await r.json() as { coins?: { id: string; symbol: string; name: string }[] }
+    return (j.coins ?? []).slice(0, 15).map((c) => ({ id: c.id, symbol: (c.symbol || '').toUpperCase(), name: c.name }))
+  } catch { return [] }
 }
 
-/** 코인 현재가(원화). */
-export async function getCoinPrice(ticker: string): Promise<number | null> {
+/** 코인 id → 원화 현재가. */
+export async function getCoinPriceKRW(id: string): Promise<number | null> {
+  const prices = await getCoinPricesKRW([id])
+  return prices[id] ?? null
+}
+
+/** 여러 코인 id → { id: 원화가격 }. */
+export async function getCoinPricesKRW(ids: string[]): Promise<Record<string, number>> {
+  const uniq = Array.from(new Set(ids.map((i) => i.toLowerCase()).filter(Boolean)))
+  if (uniq.length === 0) return {}
   try {
-    const r = await fetch(`https://api.upbit.com/v1/ticker?markets=KRW-${ticker.toUpperCase()}`)
-    const j = await r.json() as { trade_price: number }[]
-    const p = j?.[0]?.trade_price
-    return typeof p === 'number' ? p : null
-  } catch { return null }
+    const r = await fetch(`https://api.coingecko.com/api/v3/simple/price?ids=${uniq.join(',')}&vs_currencies=krw`)
+    const j = await r.json() as Record<string, { krw?: number }>
+    const out: Record<string, number> = {}
+    for (const id of uniq) {
+      const p = j?.[id]?.krw
+      if (typeof p === 'number') out[id] = p
+    }
+    return out
+  } catch { return {} }
 }

@@ -2,16 +2,7 @@
 import { useEffect, useRef } from 'react'
 import { repo } from '../db/repository'
 import { supabase } from '../lib/supabase'
-
-async function usdKrwRate(): Promise<number> {
-  try {
-    const r = await fetch('https://api.exchangerate.host/latest?base=USD&symbols=KRW')
-    const j = await r.json()
-    return typeof j?.rates?.KRW === 'number' ? j.rates.KRW : 0
-  } catch {
-    return 0
-  }
-}
+import { fetchFxRate } from '../lib/fx'
 
 export function useStockSync(profileId: string) {
   const done = useRef('')
@@ -20,14 +11,14 @@ export function useStockSync(profileId: string) {
     done.current = profileId
     ;(async () => {
       const assets = await repo.listAssets(profileId)
-      const us = assets.filter((a) => (a.type === 'stock' || a.type === 'etf') && a.market === 'us' && a.quantity && a.ticker)
+      const us = assets.filter((a) => (a.type === 'stock' || a.type === 'etf') && a.market === 'us' && a.currency === 'USD' && a.quantity && a.ticker)
       if (us.length === 0) return
       try {
         const symbols = Array.from(new Set(us.map((a) => a.ticker!.toUpperCase())))
         const { data, error } = await supabase.functions.invoke('stock-price', { body: { symbols } })
         const prices = (data as { prices?: Record<string, number> } | null)?.prices
         if (error || !prices) return
-        const fx = await usdKrwRate()
+        const fx = (await fetchFxRate('USD')) ?? 0
         for (const a of us) {
           const p = prices[a.ticker!.toUpperCase()]
           if (p) {

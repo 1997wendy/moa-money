@@ -5,8 +5,10 @@ import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
 import { useStockSync } from '../hooks/useStockSync'
+import { useFxSync } from '../hooks/useFxSync'
 import { searchStocks, getStockPrice } from '../lib/stockApi'
-import { searchCoins, getCoinPrice } from '../lib/coinApi'
+import { searchCoins, getCoinPriceKRW } from '../lib/coinApi'
+import { fetchFxRate } from '../lib/fx'
 import { won } from '../lib/format'
 import {
   SUBTYPES, GROUPS, BANKS, SECURITIES, PENSION_KINDS, CURRENCIES, subOf, groupOf, krwValue, investPnl, expectedInterest,
@@ -22,6 +24,7 @@ export default function Assets() {
   const { profileId } = useProfile()
   useCoinSync(profileId)
   useStockSync(profileId)
+  useFxSync(profileId)
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Asset | undefined>()
@@ -78,7 +81,7 @@ export default function Assets() {
                         {a.rate ? ` · ${a.rate}%${a.maturity ? ` ~${a.maturity.slice(2)}` : ' 무기한'}` : ''}
                       </div>
                       {interest && <div className="text-[11px] text-mint-d">💰 세후이자 ≈ ₩{won(interest.annualNet)}/년{interest.toMaturityNet ? ` · 만기까지 ₩${won(interest.toMaturityNet)}` : ''}</div>}
-                      {pnl && <div className={`text-[11px] ${pnl.profit >= 0 ? 'text-income' : 'text-expense'}`}>{pnl.profit >= 0 ? '▲' : '▼'} {pnl.pct >= 0 ? '+' : ''}{pnl.pct.toFixed(1)}% ({symbolOf(a.currency)}{won(Math.abs(pnl.profit))})</div>}
+                      {pnl && <div className={`text-[11px] ${pnl.profit >= 0 ? 'text-income' : 'text-expense'}`}>{pnl.profit >= 0 ? '▲' : '▼'} {pnl.pct >= 0 ? '+' : ''}{pnl.pct.toFixed(2)}% ({symbolOf(a.currency)}{won(Math.abs(pnl.profit))})</div>}
                     </div>
                     <div className="text-right shrink-0">
                       <div className="text-[14px] font-bold tnum">{foreign ? `${symbolOf(a.currency)}${won(a.amount)}` : won(a.amount)}</div>
@@ -99,16 +102,7 @@ export default function Assets() {
   )
 }
 
-async function fetchFxRate(code: string): Promise<number | null> {
-  try {
-    const res = await fetch(`https://open.er-api.com/v6/latest/${code}`)
-    const data = await res.json()
-    const r = data?.rates?.KRW
-    return typeof r === 'number' ? r : null
-  } catch { return null }
-}
-
-interface Hit { symbol: string; name: string }
+interface Hit { display: string; store: string; name: string }
 
 function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Asset; profileId: string }) {
   const [type, setType] = useState('checking')
@@ -121,7 +115,6 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [amount, setAmount] = useState<number | null>(null)
   const [principal, setPrincipal] = useState('')
   const [avgPrice, setAvgPrice] = useState('')
-  const [returnRate, setReturnRate] = useState('')
   const [ticker, setTicker] = useState('')
   const [rate, setRate] = useState('')
   const [maturity, setMaturity] = useState('')
@@ -148,13 +141,12 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       setAmount(edit.amount); setTicker(edit.ticker ?? '')
       setPrincipal(edit.principal != null ? String(edit.principal) : (edit.quantity && edit.avgPrice ? String(Math.round(edit.quantity * edit.avgPrice)) : ''))
       setAvgPrice(edit.avgPrice != null ? String(edit.avgPrice) : '')
-      setReturnRate(edit.principal && !edit.avgPrice && edit.amount ? String(Math.round((edit.amount / edit.principal - 1) * 1000) / 10) : '')
       setRate(edit.rate != null ? String(edit.rate) : ''); setMaturity(edit.maturity ?? ''); setNoMaturity(!edit.maturity && !!edit.rate)
       setSavingKind(edit.savingKind ?? 'deposit'); setSubLabel(edit.subLabel ?? '연금보험')
     } else {
       setType('checking'); setName(''); setInst(''); setMarket('kr')
       setCurrency('KRW'); setFxRate(''); setAmount(null); setTicker('')
-      setPrincipal(''); setAvgPrice(''); setReturnRate('')
+      setPrincipal(''); setAvgPrice('')
       setRate(''); setMaturity(''); setNoMaturity(false); setSavingKind('deposit'); setSubLabel('연금보험')
     }
   }, [open, edit])
@@ -173,9 +165,9 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
     setSearching(true)
     const t = setTimeout(async () => {
       try {
-        const res = sub.live === 'coin'
-          ? (await searchCoins(q)).map((c) => ({ symbol: c.ticker, name: `${c.korean} (${c.ticker})` }))
-          : (await searchStocks(q)).map((s) => ({ symbol: s.symbol, name: s.description }))
+        const res: Hit[] = sub.live === 'coin'
+          ? (await searchCoins(q)).map((c) => ({ display: c.symbol, store: c.id, name: c.name }))
+          : (await searchStocks(q)).map((s) => ({ display: s.symbol, store: s.symbol, name: s.description }))
         setHits(res)
       } finally { setSearching(false) }
     }, 400)
@@ -183,21 +175,26 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   }, [q, showSearch, sub.live])
 
   async function pick(h: Hit) {
-    setName(h.name); setTicker(h.symbol); setQ(''); setHits([])
-    if (sub.live === 'coin') { setCurrency('KRW'); setLivePrice(await getCoinPrice(h.symbol)) }
-    else { setMarket('us'); setCurrency('USD'); setLivePrice(await getStockPrice(h.symbol)) }
+    setName(h.name); setTicker(h.store); setQ(''); setHits([])
+    if (sub.live === 'coin') { setCurrency('KRW'); setLivePrice(await getCoinPriceKRW(h.store)) }
+    else { setMarket('us'); setCurrency('USD'); setLivePrice(await getStockPrice(h.store)) }
   }
+
+  // 평단가 + 현재시세 → 평가금액 자동 (통화 일치할 때만)
+  const liveMatches = (sub.live === 'coin' && currency === 'KRW') || (sub.live === 'stock' && currency === 'USD')
+  useEffect(() => {
+    if (sub.live && liveMatches && livePrice && Number(avgPrice) > 0 && Number(principal) > 0) {
+      setAmount(Math.round((Number(principal) / Number(avgPrice)) * livePrice))
+    }
+  }, [livePrice, avgPrice, principal, liveMatches, sub.live])
 
   const instList = sub.inst === 'bank' ? BANKS : sub.inst === 'securities' ? SECURITIES : sub.inst === 'both' ? [...BANKS, ...SECURITIES] : null
   const instMatches = instList && inst.trim() ? instList.filter((x) => x.includes(inst.trim())).slice(0, 8) : []
 
-  // 투자 평가금액(자산 통화) 계산
+  // 투자: 원금 대비 수익 (평가금액 = amount 직접/자동)
   const principalNum = Number(principal) || 0
   const avgNum = Number(avgPrice) || 0
-  const rrNum = returnRate.trim() === '' ? null : Number(returnRate)
-  let investValue = principalNum
-  if (sub.live && livePrice && avgNum > 0 && principalNum > 0) investValue = Math.round((principalNum / avgNum) * livePrice)
-  else if (rrNum != null && principalNum > 0) investValue = Math.round(principalNum * (1 + rrNum / 100))
+  const investValue = amount ?? 0
   const investProfit = investValue - principalNum
   const investPct = principalNum > 0 ? (investProfit / principalNum) * 100 : 0
   const fxNum = Number(fxRate) || 0
@@ -210,7 +207,7 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
 
   async function save() {
     if (!name.trim()) return
-    const amt = isInvest ? investValue : (amount ?? 0)
+    const amt = amount ?? 0
     const qtyDerived = isInvest && avgNum > 0 && principalNum > 0 ? principalNum / avgNum : undefined
     const a: Asset = {
       id: edit?.id ?? uid(), profileId, type, name: name.trim(),
@@ -263,8 +260,8 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
               <div className="absolute z-10 left-0 right-0 mt-1 bg-surface border border-line rounded-[10px] shadow-lg max-h-56 overflow-auto">
                 {searching && <div className="px-3 py-2 text-[12px] text-sub">검색 중…</div>}
                 {!searching && hits.map((h) => (
-                  <button key={h.symbol} onClick={() => pick(h)} className="w-full text-left px-3 py-2 hover:bg-canvas border-b border-line last:border-0">
-                    <div className="text-[13px] font-semibold">{h.symbol}</div>
+                  <button key={h.store} onClick={() => pick(h)} className="w-full text-left px-3 py-2 hover:bg-canvas border-b border-line last:border-0">
+                    <div className="text-[13px] font-semibold">{h.display}</div>
                     <div className="text-[11px] text-sub truncate">{h.name}</div>
                   </button>
                 ))}
@@ -311,27 +308,35 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
         </Field>
       )}
 
-      {/* 투자자산: 원금·평단가·수익률 (수량 입력 없음) */}
+      {/* 투자자산: 원금 + (평단가) + 현재 평가금액 */}
       {isInvest ? (
         <>
-          <Field label={`원금 (투자한 금액${foreign ? `, ${currency}` : ''})`}>
-            <AmountInput value={principal === '' ? null : Number(principal)} onChange={(v) => setPrincipal(v == null ? '' : String(v))} />
-          </Field>
-          {sub.live && (
-            <Field label={`평단가 (선택, ${foreign ? currency : '원'}) · 넣으면 현재시세로 자동평가`}>
-              <input type="number" value={avgPrice} onChange={(e) => setAvgPrice(e.target.value)} placeholder="내가 산 가격" className={inputCls + ' text-right tnum'} />
+          {sub.live === 'stock' && market === 'us' && (
+            <Field label="통화 (원화로도 입력 가능)">
+              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
+                {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+              </select>
             </Field>
           )}
-          <Field label="수익률 (선택, %) · 시세 자동이 안 되면 직접 입력">
-            <input type="number" value={returnRate} onChange={(e) => setReturnRate(e.target.value)} placeholder="예: 12.5 (마이너스도 가능)" className={inputCls + ' text-right tnum'} />
+          <Field label={`원금 (총 투자금액${foreign ? `, ${currency}` : ''})`}>
+            <AmountInput value={principal === '' ? null : Number(principal)} onChange={(v) => setPrincipal(v == null ? '' : String(v))} />
           </Field>
-          {principalNum > 0 && (
+          {sub.live && liveMatches && (
+            <Field label={`평단가 (선택, ${foreign ? currency : '원'}) · 넣으면 현재시세로 자동`}>
+              <input type="number" value={avgPrice} onChange={(e) => setAvgPrice(e.target.value)} placeholder="내가 산 평균 가격" className={inputCls + ' text-right tnum'} />
+            </Field>
+          )}
+          <Field label={`현재 평가금액 (총액${foreign ? `, ${currency}` : ''})`}>
+            <AmountInput value={amount} onChange={setAmount} />
+          </Field>
+          {(principalNum > 0 || investValue > 0) && (
             <div className="text-[12.5px] bg-canvas rounded-lg px-3 py-2 mb-2">
-              평가금액 <b>{symbolOf(currency)}{won(investValue)}</b>{foreign && <span className="text-sub"> ≈ ₩{won(investKrw)}</span>}
-              <span className={investProfit >= 0 ? ' text-income' : ' text-expense'}> · 수익 {investProfit >= 0 ? '+' : ''}{symbolOf(currency)}{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(1)}%)</span>
+              {foreign && <span className="text-sub">원화 ≈ ₩{won(investKrw)} · </span>}
+              수익 <b className={investProfit >= 0 ? 'text-income' : 'text-expense'}>{investProfit >= 0 ? '+' : ''}{symbolOf(currency)}{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(2)}%)</b>
             </div>
           )}
-          {sub.key === 'gold' && <div className="text-[11px] text-sub -mt-1 mb-1">※ 금은 실시간 시세 자동연동이 아직 없어요. 수익률을 직접 넣거나 원금만 입력하세요.</div>}
+          {pensionInvest && <div className="text-[11px] text-sub -mt-1 mb-1">※ IRP·연금저축펀드는 여러 종목을 담는 계좌예요. 총 원금과 현재 평가금액(계좌 총액)을 넣으면 수익이 자동 계산돼요.</div>}
+          {sub.key === 'gold' && <div className="text-[11px] text-sub -mt-1 mb-1">※ 금은 실시간 시세 자동연동이 없어요. 원금과 현재 평가금액을 직접 넣으세요.</div>}
         </>
       ) : (
         <>
