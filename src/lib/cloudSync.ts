@@ -18,6 +18,14 @@ async function currentUid(): Promise<string | null> {
   return user?.id ?? null
 }
 
+/** 이 계정의 클라우드 백업이 존재하는지 */
+export async function hasCloud(): Promise<boolean> {
+  const id = await currentUid()
+  if (!id) return false
+  const { data } = await supabase.from('backups').select('user_id').maybeSingle()
+  return !!data
+}
+
 /** 로컬 → 클라우드 업로드 */
 export async function pushNow(): Promise<'ok' | 'noauth' | 'error'> {
   const id = await currentUid()

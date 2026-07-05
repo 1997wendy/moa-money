@@ -1,6 +1,7 @@
 import { createBrowserRouter, RouterProvider } from 'react-router-dom'
 import { ProfileProvider } from './state/profile'
 import { ToastProvider } from './components/Toast'
+import AuthGate from './components/AuthGate'
 import AppShell from './components/AppShell'
 import Dashboard from './screens/Dashboard'
 import Ledger from './screens/Ledger'
@@ -38,7 +39,9 @@ export default function App() {
   return (
     <ProfileProvider>
       <ToastProvider>
-        <RouterProvider router={router} />
+        <AuthGate>
+          <RouterProvider router={router} />
+        </AuthGate>
       </ToastProvider>
     </ProfileProvider>
   )

@@ -63,8 +63,8 @@ export default function AppShell() {
         <div className="px-3 mb-3">
           <div className="bg-mint-l rounded-[12px] p-3">
             <div className="flex items-center justify-between mb-1.5">
-              <span className="text-[11px] font-bold text-mint-d">사용자 (이 기기)</span>
-              <NavLink to="/settings#account" className="text-[11px] font-bold text-mint-d hover:underline">추가·관리 ›</NavLink>
+              <span className="text-[11px] font-bold text-mint-d">프로필</span>
+              <NavLink to="/settings#account" className="text-[11px] font-bold text-mint-d hover:underline">관리 ›</NavLink>
             </div>
             <select value={profileId} onChange={(e) => setProfileId(e.target.value)} className="w-full border border-line rounded-[8px] px-2 py-2 text-[13px] font-bold bg-surface outline-none">
               {profiles.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}

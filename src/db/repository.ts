@@ -132,6 +132,19 @@ export const repo = {
       profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes,
     }
   },
+  /** 로컬 전체 비우기 (계정 로그아웃/전환 시). 동기화 훅 억제. */
+  async wipeLocal() {
+    const w = window as unknown as { __moaSuppressDirty?: boolean }
+    w.__moaSuppressDirty = true
+    try {
+      await db.transaction('rw', db.tables, async () => {
+        await Promise.all(db.tables.map((t) => t.clear()))
+      })
+    } finally {
+      w.__moaSuppressDirty = false
+    }
+  },
+
   /** 한 프로필의 데이터만 뽑아서 내보내기 (공유용) */
   async exportProfile(profileId: ID) {
     const by = (t: { where: (k: string) => { equals: (v: string) => { toArray: () => Promise<unknown[]> } } }) =>
