@@ -4,7 +4,7 @@ import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
 import { pushNow, pullForce } from '../lib/cloudSync'
-import { createShare, listMyShares, revokeShare, type Share } from '../lib/sharing'
+import { createShare, listMyShares, revokeShare, SHARE_MENUS, type Share, type MenuPerm, type MenuPerms } from '../lib/sharing'
 import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
@@ -296,13 +296,15 @@ function CloudSection() {
   )
 }
 
+const PERM_OPTS: [MenuPerm, string][] = [['hidden', '숨김'], ['read', '읽기'], ['edit', '수정']]
+const defaultPerms = (): MenuPerms => Object.fromEntries(SHARE_MENUS.map((m) => [m.key, 'read'])) as MenuPerms
+
 function ShareSection() {
   const { profiles } = useProfile()
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [profileId, setProfileId] = useState('')
   const [target, setTarget] = useState('')
-  const [perm, setPerm] = useState<'read' | 'edit'>('read')
-  const [hide, setHide] = useState<Set<string>>(new Set())
+  const [perms, setPerms] = useState<MenuPerms>(defaultPerms())
   const [shares, setShares] = useState<Share[]>([])
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -312,19 +314,28 @@ function ShareSection() {
   useEffect(() => { if (profiles.length && !profileId) setProfileId(profiles[0].id) }, [profiles, profileId])
   async function refresh() { setShares(await listMyShares()) }
 
-  function toggleHide(k: string) { setHide((p) => { const n = new Set(p); n.has(k) ? n.delete(k) : n.add(k); return n }) }
+  const setPerm = (key: string, v: MenuPerm) => setPerms((p) => ({ ...p, [key]: v }))
+  const setAll = (v: MenuPerm) => setPerms(Object.fromEntries(SHARE_MENUS.map((m) => [m.key, v])) as MenuPerms)
 
   async function create() {
     const p = profiles.find((x) => x.id === profileId)
     if (!p || !target.trim()) { setMsg('프로필과 상대 이메일을 확인하세요.'); return }
     setBusy(true)
-    const r = await createShare({ profileId: p.id, profileName: p.name, targetEmail: target, permission: perm, hiddenMenus: Array.from(hide) })
+    const r = await createShare({ profileId: p.id, profileName: p.name, targetEmail: target, menuPerms: perms })
     setBusy(false)
     if (r === 'ok') { setMsg(`'${p.name}' 프로필을 ${target}에게 공유했어요.`); setTarget(''); refresh() }
     else if (r === 'noauth') setMsg('먼저 데이터·백업 탭에서 로그인하세요.')
     else setMsg('공유 실패. 상대 이메일/네트워크를 확인하세요.')
   }
   async function revoke(id: string) { if (!confirm('이 공유를 취소할까요?')) return; await revokeShare(id); refresh() }
+
+  const summary = (s: Share) => {
+    const mp = s.menu_perms ?? {}
+    const edit = Object.values(mp).filter((v) => v === 'edit').length
+    const read = Object.values(mp).filter((v) => v === 'read').length
+    const hidden = Object.values(mp).filter((v) => v === 'hidden').length
+    return `읽기 ${read} · 수정 ${edit} · 숨김 ${hidden}`
+  }
 
   if (!userEmail) return (
     <Card><CardLabel>🤝 공유</CardLabel><p className="text-[13px] text-sub">공유하려면 먼저 <b>데이터·백업</b> 탭에서 <b>로그인</b>하세요.</p></Card>
@@ -334,22 +345,29 @@ function ShareSection() {
     <>
       <Card className="mb-3.5">
         <CardLabel>🤝 프로필 공유하기</CardLabel>
-        <p className="text-[12px] text-sub mb-3">내 프로필을 다른 사람 이메일로 공유해요. 상대가 그 이메일로 로그인하면 (권한대로) 보게 돼요. <b className="text-ink">상대가 보는 화면은 다음 업데이트에서 열려요.</b></p>
+        <p className="text-[12px] text-sub mb-3">내 프로필을 다른 사람 이메일로 공유해요. 상대가 그 이메일로 로그인하면 <b className="text-ink">메뉴별 권한대로</b> 보게 돼요. <b className="text-ink">상대가 보는 화면은 다음 업데이트에서 열려요.</b></p>
         <Field label="공유할 프로필"><select value={profileId} onChange={(e) => setProfileId(e.target.value)} className={inputCls}>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
         <Field label="상대 이메일"><input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="sibling@email.com" className={inputCls} /></Field>
-        <Field label="권한">
-          <div className="flex gap-1.5">
-            {([['read', '읽기 전용'], ['edit', '수정 가능']] as const).map(([v, l]) => (
-              <button key={v} onClick={() => setPerm(v)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${perm === v ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{l}</button>
-            ))}
+
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[12px] font-semibold text-sub">메뉴별 권한</span>
+          <div className="flex gap-1">
+            {PERM_OPTS.map(([v, l]) => <button key={v} onClick={() => setAll(v)} className="text-[11px] text-sub border border-line rounded-md px-1.5 py-0.5 hover:bg-canvas">전체 {l}</button>)}
           </div>
-        </Field>
-        <div className="text-[12px] font-semibold text-sub mb-1.5">상대에게 숨길 메뉴 (누르면 숨김)</div>
-        <div className="flex gap-1.5 flex-wrap mb-3">
-          {HIDEABLE.map((m) => (
-            <button key={m.key} onClick={() => toggleHide(m.key)} className={`px-2.5 py-1.5 rounded-full text-[12px] font-semibold border ${hide.has(m.key) ? 'bg-ink text-white border-ink' : 'bg-canvas text-sub border-line'}`}>{hide.has(m.key) ? '✕ ' : ''}{m.label}</button>
+        </div>
+        <div className="space-y-1.5 mb-3">
+          {SHARE_MENUS.map((m) => (
+            <div key={m.key} className="flex items-center justify-between">
+              <span className="text-[13px] font-semibold">{m.label}</span>
+              <div className="flex bg-canvas rounded-lg p-0.5">
+                {PERM_OPTS.map(([v, l]) => (
+                  <button key={v} onClick={() => setPerm(m.key, v)} className={`px-2.5 py-1 rounded-md text-[12px] font-bold transition-colors ${perms[m.key] === v ? (v === 'hidden' ? 'bg-ink text-white' : v === 'edit' ? 'bg-mint text-white' : 'bg-surface shadow-sm text-ink') : 'text-sub'}`}>{l}</button>
+                ))}
+              </div>
+            </div>
           ))}
         </div>
+
         <Button onClick={create} disabled={busy}>공유 만들기</Button>
         {msg && <div className="mt-3 text-[12.5px] bg-mint-l text-mint-d rounded-lg px-3 py-2">{msg}</div>}
       </Card>
@@ -361,7 +379,7 @@ function ShareSection() {
             <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
               <div>
                 <div className="text-[13.5px] font-semibold">{s.profile_name} → {s.target_email}</div>
-                <div className="text-[11px] text-sub">{s.permission === 'edit' ? '수정 가능' : '읽기 전용'}{s.hidden_menus.length ? ` · 메뉴 ${s.hidden_menus.length}개 숨김` : ''}</div>
+                <div className="text-[11px] text-sub">{summary(s)}</div>
               </div>
               <button onClick={() => revoke(s.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
             </div>

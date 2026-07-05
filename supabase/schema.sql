@@ -44,3 +44,5 @@ create policy "share_target_select" on public.shared_profiles
 create policy "share_target_update" on public.shared_profiles
   for update using ((auth.jwt() ->> 'email') = target_email and permission = 'edit')
   with check ((auth.jwt() ->> 'email') = target_email and permission = 'edit');
+
+alter table public.shared_profiles add column if not exists menu_perms jsonb not null default '{}';

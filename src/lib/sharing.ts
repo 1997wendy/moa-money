@@ -1,6 +1,21 @@
-// 프로필 공유 (마스터 → 상대). 클라우드 shared_profiles 테이블 사용.
+// 프로필 공유 (마스터 → 상대). 메뉴별 권한(숨김/읽기/수정).
 import { supabase } from './supabase'
 import { repo } from '../db/repository'
+
+export type MenuPerm = 'hidden' | 'read' | 'edit'
+export type MenuPerms = Record<string, MenuPerm>
+
+/** 공유에서 권한을 정할 수 있는 메뉴들 */
+export const SHARE_MENUS: { key: string; label: string }[] = [
+  { key: 'dashboard', label: '대시보드' },
+  { key: 'ledger', label: '가계부' },
+  { key: 'receivables', label: '정산' },
+  { key: 'assets', label: '자산' },
+  { key: 'calendar', label: '캘린더' },
+  { key: 'stats', label: '통계·목표' },
+  { key: 'invest', label: '투자' },
+  { key: 'cards', label: '카드혜택' },
+]
 
 export interface Share {
   id: string
@@ -9,29 +24,31 @@ export interface Share {
   profile_name: string
   permission: 'read' | 'edit'
   hidden_menus: string[]
+  menu_perms: MenuPerms
   updated_at: string
 }
 
-/** 마스터: 공유 생성/갱신 (같은 프로필·상대면 덮어쓰기) */
+/** 마스터: 공유 생성/갱신 (같은 상대+프로필명이면 덮어쓰기) */
 export async function createShare(opts: {
   profileId: string
   profileName: string
   targetEmail: string
-  permission: 'read' | 'edit'
-  hiddenMenus: string[]
+  menuPerms: MenuPerms
 }): Promise<'ok' | 'noauth' | 'error'> {
   const { data: { user } } = await supabase.auth.getUser()
   if (!user) return 'noauth'
   const target = opts.targetEmail.trim().toLowerCase()
   if (!target) return 'error'
+  const values = Object.values(opts.menuPerms)
+  const permission: 'read' | 'edit' = values.includes('edit') ? 'edit' : 'read'
+  const hidden = Object.entries(opts.menuPerms).filter(([, v]) => v === 'hidden').map(([k]) => k)
   const data = await repo.exportProfile(opts.profileId)
-  // 같은 상대+프로필명 기존 공유 있으면 갱신
   const { data: existing } = await supabase.from('shared_profiles')
     .select('id').eq('owner_id', user.id).eq('target_email', target).eq('profile_name', opts.profileName).maybeSingle()
   const row = {
     owner_id: user.id, owner_email: user.email, target_email: target,
-    profile_name: opts.profileName, permission: opts.permission,
-    hidden_menus: opts.hiddenMenus, data, updated_at: new Date().toISOString(),
+    profile_name: opts.profileName, permission, hidden_menus: hidden,
+    menu_perms: opts.menuPerms, data, updated_at: new Date().toISOString(),
   }
   const q = existing?.id
     ? supabase.from('shared_profiles').update(row).eq('id', (existing as { id: string }).id)
@@ -40,10 +57,9 @@ export async function createShare(opts: {
   return error ? 'error' : 'ok'
 }
 
-/** 마스터: 내가 만든 공유 목록 */
 export async function listMyShares(): Promise<Share[]> {
   const { data } = await supabase.from('shared_profiles')
-    .select('id, owner_email, target_email, profile_name, permission, hidden_menus, updated_at')
+    .select('id, owner_email, target_email, profile_name, permission, hidden_menus, menu_perms, updated_at')
     .order('updated_at', { ascending: false })
   return (data as Share[]) ?? []
 }
@@ -55,6 +71,6 @@ export async function revokeShare(id: string): Promise<void> {
 /** 상대: 나에게 공유된 프로필 목록(데이터 포함) */
 export async function listSharedToMe(): Promise<(Share & { data: Record<string, unknown> })[]> {
   const { data } = await supabase.from('shared_profiles')
-    .select('id, owner_email, target_email, profile_name, permission, hidden_menus, updated_at, data')
+    .select('id, owner_email, target_email, profile_name, permission, hidden_menus, menu_perms, updated_at, data')
   return (data as (Share & { data: Record<string, unknown> })[]) ?? []
 }
