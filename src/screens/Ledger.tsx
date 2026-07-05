@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChevronLeft, ChevronRight, Upload, Search } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Upload, Search, ArrowDownUp } from 'lucide-react'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
@@ -79,24 +79,25 @@ export default function Ledger() {
         <button onClick={() => setMonth(addMonth(month, 1))} className="p-1.5 rounded-lg hover:bg-line/60 text-sub"><ChevronRight size={18} /></button>
       </div>
 
-      {/* 모아보기 토글 + 검색 */}
-      <div className="flex items-center gap-2 mb-4 flex-wrap">
-        <div className="flex bg-canvas rounded-[10px] p-1 w-fit">
+      {/* 모아보기 토글 + 정렬 */}
+      <div className="flex items-center justify-between gap-2 mb-3">
+        <div className="flex bg-canvas rounded-[10px] p-1">
           {([['all', '전체'], ['expense', '지출'], ['income', '수입']] as [View, string][]).map(([v, label]) => (
             <button key={v} onClick={() => { setView(v); setCat('전체') }} className={`px-4 py-1.5 rounded-[8px] text-[13px] font-bold transition-colors ${view === v ? 'bg-surface shadow-sm text-ink' : 'text-sub'}`}>
               {label}
             </button>
           ))}
         </div>
-        <div className="relative flex-1 min-w-[140px]">
-          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-sub" />
-          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="가맹점·메모·카테고리 검색" className={inputCls + ' pl-9'} />
-          {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-sub hover:text-ink text-[16px]">×</button>}
-        </div>
-        <select value={sort} onChange={(e) => setSort(e.target.value as 'new' | 'old')} className={inputCls + ' w-auto text-[12.5px] py-2'}>
-          <option value="new">최신순</option>
-          <option value="old">오래된순</option>
-        </select>
+        <button onClick={() => setSort(sort === 'new' ? 'old' : 'new')} className="shrink-0 flex items-center gap-1.5 text-[12.5px] font-bold text-sub hover:text-ink px-2 py-1.5 rounded-lg hover:bg-canvas">
+          <ArrowDownUp size={14} />{sort === 'new' ? '최신순' : '오래된순'}
+        </button>
+      </div>
+
+      {/* 검색 */}
+      <div className="relative mb-4">
+        <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-sub" />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="가맹점·메모·카테고리 검색" className={inputCls + ' pl-9'} />
+        {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-sub hover:text-ink text-[16px]">×</button>}
       </div>
 
       {/* 합계 */}
