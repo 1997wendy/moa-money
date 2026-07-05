@@ -58,8 +58,11 @@ export async function createShare(opts: {
 }
 
 export async function listMyShares(): Promise<Share[]> {
+  const { data: { user } } = await supabase.auth.getUser()
+  if (!user) return []
   const { data } = await supabase.from('shared_profiles')
     .select('id, owner_email, target_email, profile_name, permission, hidden_menus, menu_perms, updated_at')
+    .eq('owner_id', user.id) // 내가 소유(공유한) 것만
     .order('updated_at', { ascending: false })
   return (data as Share[]) ?? []
 }

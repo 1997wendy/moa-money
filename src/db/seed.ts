@@ -34,6 +34,13 @@ function tx(
   }
 }
 
+/** 새 계정: 빈 프로필 1개만 생성 (샘플 데이터 없음) */
+export async function initEmptyAccount() {
+  const count = await db.profiles.count()
+  if (count > 0) return
+  await db.profiles.put({ id: uid(), name: '내 프로필', order: 0 })
+}
+
 export async function seedIfEmpty() {
   const count = await db.profiles.count()
   if (count > 0) return

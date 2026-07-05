@@ -424,7 +424,7 @@ function ShareSection() {
                 <div className="text-[13.5px] font-semibold">{s.profile_name}</div>
                 <div className="text-[11px] text-sub">{s.owner_email ?? '상대'} 님이 공유 · {summary(s)}</div>
               </div>
-              <button onClick={() => nav(`/shared/${s.id}`)} className="text-[12px] font-bold text-white bg-mint rounded-lg px-3 py-1.5 hover:bg-mint-d">보기</button>
+              <button onClick={() => nav(`/shared/${s.id}`)} className="text-[12px] font-bold text-white bg-mint rounded-lg px-3 py-1.5 hover:bg-mint-d">읽기전용 열기</button>
             </div>
           ))
         )}

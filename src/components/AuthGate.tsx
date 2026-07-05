@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { supabase } from '../lib/supabase'
 import { repo } from '../db/repository'
-import { seedIfEmpty } from '../db/seed'
+import { initEmptyAccount } from '../db/seed'
 import { hasCloud, pullForce, pushNow, isDirty } from '../lib/cloudSync'
 import AuthScreen from './AuthScreen'
 
@@ -28,7 +28,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
           await pullForce() // 깨끗한 로컬 → 클라우드 계정 데이터를 불러옴
         } else {
           await repo.wipeLocal() // 새 계정: 이전 로컬 데이터 제거
-          await seedIfEmpty() // 시작용 샘플
+          await initEmptyAccount() // 빈 프로필 1개로 시작(샘플 없음)
           await pushNow() // 클라우드 기준점 생성
         }
       } catch {
