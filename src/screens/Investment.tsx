@@ -28,7 +28,7 @@ function bucketOf(a: Asset): string | null {
   if (a.type === 'coin') return 'coin'
   if (a.type === 'gold') return 'gold'
   const g = groupOf(a.type)
-  return g === 'bank' || g === 'cash' ? 'cash' : null
+  return g === 'cash' || g === 'saving' ? 'cash' : null
 }
 const monthNet = (txs: Transaction[], ym: string) => {
   let inc = 0, exp = 0

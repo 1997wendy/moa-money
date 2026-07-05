@@ -30,6 +30,10 @@ export interface Asset {
   quantity?: number // 투자자산 보유 수량
   unitPrice?: number // 단가
   ticker?: string // 종목 코드
+  rate?: number // 예적금 금리 (연 %)
+  maturity?: string // 예적금 만기일 yyyy-mm-dd (없으면 무제한)
+  savingKind?: 'deposit' | 'installment' // 예금 / 적금
+  subLabel?: string // 세부 종류 (연금: 연금보험/IRP/연금저축펀드 등)
   updatedAt: string // ISO
 }
 
