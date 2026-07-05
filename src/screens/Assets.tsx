@@ -16,6 +16,7 @@ import AmountInput from '../components/AmountInput'
 import type { Asset } from '../db/types'
 
 const symbolOf = (code?: string) => CURRENCIES.find((c) => c.code === (code ?? 'KRW'))?.symbol ?? '₩'
+const PENSION_INVEST = ['IRP', '연금저축펀드', '퇴직연금']
 
 export default function Assets() {
   const { profileId } = useProfile()
@@ -73,7 +74,7 @@ export default function Assets() {
                       <div className="text-[13.5px] font-semibold truncate">{a.name}</div>
                       <div className="text-[11px] text-sub truncate">
                         {a.subLabel || subOf(a.type).label}{a.institution ? ` · ${a.institution}` : ''}
-                        {a.quantity != null ? ` · ${a.quantity}${a.ticker ? ` ${a.ticker}` : '주'}` : ''}
+                        {a.ticker ? ` · ${a.ticker}` : ''}
                         {a.rate ? ` · ${a.rate}%${a.maturity ? ` ~${a.maturity.slice(2)}` : ' 무기한'}` : ''}
                       </div>
                       {interest && <div className="text-[11px] text-mint-d">💰 세후이자 ≈ ₩{won(interest.annualNet)}/년{interest.toMaturityNet ? ` · 만기까지 ₩${won(interest.toMaturityNet)}` : ''}</div>}
@@ -100,7 +101,7 @@ export default function Assets() {
 
 async function fetchFxRate(code: string): Promise<number | null> {
   try {
-    const res = await fetch(`https://api.exchangerate.host/latest?base=${code}&symbols=KRW`)
+    const res = await fetch(`https://open.er-api.com/v6/latest/${code}`)
     const data = await res.json()
     const r = data?.rates?.KRW
     return typeof r === 'number' ? r : null
@@ -113,47 +114,52 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [type, setType] = useState('checking')
   const [name, setName] = useState('')
   const [inst, setInst] = useState('')
-  const [instCustom, setInstCustom] = useState(false)
+  const [instOpen, setInstOpen] = useState(false)
   const [market, setMarket] = useState<'kr' | 'us'>('kr')
   const [currency, setCurrency] = useState('KRW')
   const [fxRate, setFxRate] = useState('')
   const [amount, setAmount] = useState<number | null>(null)
-  const [quantity, setQuantity] = useState('')
-  const [ticker, setTicker] = useState('')
+  const [principal, setPrincipal] = useState('')
   const [avgPrice, setAvgPrice] = useState('')
+  const [returnRate, setReturnRate] = useState('')
+  const [ticker, setTicker] = useState('')
   const [rate, setRate] = useState('')
   const [maturity, setMaturity] = useState('')
   const [noMaturity, setNoMaturity] = useState(false)
   const [savingKind, setSavingKind] = useState<'deposit' | 'installment'>('deposit')
   const [subLabel, setSubLabel] = useState('연금보험')
-  // 검색
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
   const [searching, setSearching] = useState(false)
   const [livePrice, setLivePrice] = useState<number | null>(null)
 
   const sub = subOf(type)
+  const pensionInvest = !!sub.pension && PENSION_INVEST.includes(subLabel)
+  const isInvest = !!sub.qty || pensionInvest
   const showSearch = (sub.live === 'stock' && market === 'us') || sub.live === 'coin'
   const foreign = currency !== 'KRW'
 
   useEffect(() => {
     if (!open) return
-    setQ(''); setHits([]); setLivePrice(null)
+    setQ(''); setHits([]); setLivePrice(null); setInstOpen(false)
     if (edit) {
-      setType(edit.type); setName(edit.name); setInst(edit.institution ?? ''); setInstCustom(false)
+      setType(edit.type); setName(edit.name); setInst(edit.institution ?? '')
       setMarket(edit.market ?? 'kr'); setCurrency(edit.currency ?? 'KRW'); setFxRate(edit.fxRate ? String(edit.fxRate) : '')
-      setAmount(edit.amount); setQuantity(edit.quantity != null ? String(edit.quantity) : ''); setTicker(edit.ticker ?? '')
+      setAmount(edit.amount); setTicker(edit.ticker ?? '')
+      setPrincipal(edit.principal != null ? String(edit.principal) : (edit.quantity && edit.avgPrice ? String(Math.round(edit.quantity * edit.avgPrice)) : ''))
       setAvgPrice(edit.avgPrice != null ? String(edit.avgPrice) : '')
+      setReturnRate(edit.principal && !edit.avgPrice && edit.amount ? String(Math.round((edit.amount / edit.principal - 1) * 1000) / 10) : '')
       setRate(edit.rate != null ? String(edit.rate) : ''); setMaturity(edit.maturity ?? ''); setNoMaturity(!edit.maturity && !!edit.rate)
       setSavingKind(edit.savingKind ?? 'deposit'); setSubLabel(edit.subLabel ?? '연금보험')
     } else {
-      setType('checking'); setName(''); setInst(''); setInstCustom(false); setMarket('kr')
-      setCurrency('KRW'); setFxRate(''); setAmount(null); setQuantity(''); setTicker(''); setAvgPrice('')
+      setType('checking'); setName(''); setInst(''); setMarket('kr')
+      setCurrency('KRW'); setFxRate(''); setAmount(null); setTicker('')
+      setPrincipal(''); setAvgPrice(''); setReturnRate('')
       setRate(''); setMaturity(''); setNoMaturity(false); setSavingKind('deposit'); setSubLabel('연금보험')
     }
   }, [open, edit])
 
-  // 외화 자동 환율 (칸 없이 자동 적용)
+  // 외화 자동 환율
   useEffect(() => {
     if (!open || currency === 'KRW') return
     let cancel = false
@@ -166,18 +172,15 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
     if (!showSearch || !q.trim()) { setHits([]); return }
     setSearching(true)
     const t = setTimeout(async () => {
-      const res = sub.live === 'coin'
-        ? (await searchCoins(q)).map((c) => ({ symbol: c.ticker, name: `${c.korean} (${c.ticker})` }))
-        : (await searchStocks(q)).map((s) => ({ symbol: s.symbol, name: s.description }))
-      setHits(res); setSearching(false)
+      try {
+        const res = sub.live === 'coin'
+          ? (await searchCoins(q)).map((c) => ({ symbol: c.ticker, name: `${c.korean} (${c.ticker})` }))
+          : (await searchStocks(q)).map((s) => ({ symbol: s.symbol, name: s.description }))
+        setHits(res)
+      } finally { setSearching(false) }
     }, 400)
     return () => clearTimeout(t)
   }, [q, showSearch, sub.live])
-
-  // 현재가 × 수량 → 평가액 자동
-  useEffect(() => {
-    if (sub.qty && sub.live && livePrice && Number(quantity) > 0) setAmount(Math.round(Number(quantity) * livePrice))
-  }, [livePrice, quantity, sub.qty, sub.live])
 
   async function pick(h: Hit) {
     setName(h.name); setTicker(h.symbol); setQ(''); setHits([])
@@ -186,26 +189,40 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   }
 
   const instList = sub.inst === 'bank' ? BANKS : sub.inst === 'securities' ? SECURITIES : sub.inst === 'both' ? [...BANKS, ...SECURITIES] : null
-  const krwPreview = foreign && amount && Number(fxRate) ? Math.round(amount * Number(fxRate)) : null
-  const pnlPreview = sub.qty && Number(quantity) > 0 && Number(avgPrice) > 0 && amount != null
-    ? { principal: Number(quantity) * Number(avgPrice), profit: amount - Number(quantity) * Number(avgPrice) } : null
+  const instMatches = instList && inst.trim() ? instList.filter((x) => x.includes(inst.trim())).slice(0, 8) : []
+
+  // 투자 평가금액(자산 통화) 계산
+  const principalNum = Number(principal) || 0
+  const avgNum = Number(avgPrice) || 0
+  const rrNum = returnRate.trim() === '' ? null : Number(returnRate)
+  let investValue = principalNum
+  if (sub.live && livePrice && avgNum > 0 && principalNum > 0) investValue = Math.round((principalNum / avgNum) * livePrice)
+  else if (rrNum != null && principalNum > 0) investValue = Math.round(principalNum * (1 + rrNum / 100))
+  const investProfit = investValue - principalNum
+  const investPct = principalNum > 0 ? (investProfit / principalNum) * 100 : 0
+  const fxNum = Number(fxRate) || 0
+  const investKrw = foreign && fxNum ? Math.round(investValue * fxNum) : investValue
+
+  const krwPreview = foreign && amount && fxNum ? Math.round(amount * fxNum) : null
   const interestObj = sub.rate && Number(rate) > 0 && amount
     ? expectedInterest({ amount, rate: Number(rate), maturity: noMaturity ? undefined : (maturity || undefined) } as Asset)
     : null
 
   async function save() {
     if (!name.trim()) return
-    const amt = amount ?? 0
+    const amt = isInvest ? investValue : (amount ?? 0)
+    const qtyDerived = isInvest && avgNum > 0 && principalNum > 0 ? principalNum / avgNum : undefined
     const a: Asset = {
       id: edit?.id ?? uid(), profileId, type, name: name.trim(),
       amount: amt,
       currency: currency === 'KRW' ? undefined : currency,
-      fxRate: foreign && Number(fxRate) ? Number(fxRate) : undefined,
-      institution: inst || undefined,
+      fxRate: foreign && fxNum ? fxNum : undefined,
+      institution: inst.trim() || undefined,
       market: sub.live === 'stock' ? market : undefined,
-      quantity: sub.qty && quantity ? Number(quantity) : undefined,
-      unitPrice: sub.qty && quantity && Number(quantity) > 0 ? amt / Number(quantity) : undefined,
-      avgPrice: sub.qty && avgPrice ? Number(avgPrice) : undefined,
+      principal: isInvest && principalNum > 0 ? principalNum : undefined,
+      quantity: qtyDerived,
+      unitPrice: qtyDerived ? amt / qtyDerived : undefined,
+      avgPrice: isInvest && avgNum > 0 ? avgNum : undefined,
       ticker: sub.live && ticker.trim() ? ticker.trim() : undefined,
       rate: sub.rate && Number(rate) > 0 ? Number(rate) : undefined,
       maturity: sub.rate && !noMaturity && maturity ? maturity : undefined,
@@ -219,17 +236,15 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
 
   return (
     <Modal open={open} onClose={onClose} title={edit ? '자산 수정' : '자산 추가'}>
-      {/* 분류 */}
       <div className="mb-3">
         <span className="text-[12px] font-semibold text-sub">분류</span>
         <div className="flex gap-1.5 flex-wrap mt-1.5">
           {SUBTYPES.map((s) => (
-            <button key={s.key} onClick={() => { setType(s.key); setInst(''); setInstCustom(false); setLivePrice(null) }} className={`px-3 py-1.5 rounded-full text-[12.5px] font-semibold border ${sub.key === s.key ? 'bg-mint text-white border-mint' : 'bg-canvas text-sub border-line'}`}>{s.label}</button>
+            <button key={s.key} onClick={() => { setType(s.key); setInst(''); setLivePrice(null) }} className={`px-3 py-1.5 rounded-full text-[12.5px] font-semibold border ${sub.key === s.key ? 'bg-mint text-white border-mint' : 'bg-canvas text-sub border-line'}`}>{s.label}</button>
           ))}
         </div>
       </div>
 
-      {/* 주식/ETF 국내·해외 */}
       {sub.live === 'stock' && (
         <Field label="국내 / 해외">
           <div className="flex gap-1.5">
@@ -240,31 +255,29 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
         </Field>
       )}
 
-      {/* 종목/코인 검색 */}
       {showSearch && (
         <Field label={sub.live === 'coin' ? '코인 검색' : '종목 검색 (해외)'}>
           <div className="relative">
             <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={sub.live === 'coin' ? '비트코인, BTC …' : 'apple, AAPL …'} className={inputCls} />
-            {(searching || hits.length > 0 || (q.trim() && !searching)) && (
+            {q.trim() && (
               <div className="absolute z-10 left-0 right-0 mt-1 bg-surface border border-line rounded-[10px] shadow-lg max-h-56 overflow-auto">
                 {searching && <div className="px-3 py-2 text-[12px] text-sub">검색 중…</div>}
-                {hits.map((h) => (
+                {!searching && hits.map((h) => (
                   <button key={h.symbol} onClick={() => pick(h)} className="w-full text-left px-3 py-2 hover:bg-canvas border-b border-line last:border-0">
                     <div className="text-[13px] font-semibold">{h.symbol}</div>
                     <div className="text-[11px] text-sub truncate">{h.name}</div>
                   </button>
                 ))}
-                {!searching && hits.length === 0 && q.trim() && <div className="px-3 py-2 text-[12px] text-sub">결과 없음</div>}
+                {!searching && hits.length === 0 && <div className="px-3 py-2 text-[12px] text-sub">결과 없음</div>}
               </div>
             )}
           </div>
-          {livePrice != null && <div className="text-[12px] text-mint-d mt-1">✓ {ticker} 현재가 {sub.live === 'coin' ? `₩${won(livePrice)}` : `$${livePrice}`} · 수량 넣으면 평가액 자동</div>}
+          {livePrice != null && <div className="text-[12px] text-mint-d mt-1">✓ {ticker} 현재가 {sub.live === 'coin' ? `₩${won(livePrice)}` : `$${livePrice}`}</div>}
         </Field>
       )}
 
       <Field label="이름"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 주거래 통장 / 애플 / 비트코인" className={inputCls} /></Field>
 
-      {/* 연금 종류 */}
       {sub.pension && (
         <Field label="종류">
           <select value={subLabel} onChange={(e) => setSubLabel(e.target.value)} className={inputCls}>
@@ -273,7 +286,6 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
         </Field>
       )}
 
-      {/* 예적금: 예금/적금 */}
       {sub.rate && (
         <Field label="종류">
           <div className="flex gap-1.5">
@@ -284,66 +296,66 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
         </Field>
       )}
 
-      {/* 기관 */}
       {instList && (
         <Field label={sub.inst === 'bank' ? '은행' : sub.inst === 'securities' ? '증권사' : '기관 (선택)'}>
-          {instCustom ? (
-            <div className="flex gap-2">
-              <input value={inst} onChange={(e) => setInst(e.target.value)} placeholder="직접 입력" className={inputCls + ' flex-1'} autoFocus />
-              <Button variant="line" onClick={() => { setInstCustom(false); setInst('') }}>목록</Button>
-            </div>
-          ) : (
-            <select value={inst} onChange={(e) => { if (e.target.value === '__custom') { setInstCustom(true); setInst('') } else setInst(e.target.value) }} className={inputCls}>
-              <option value="">선택 안 함</option>
-              {instList.map((b) => <option key={b} value={b}>{b}</option>)}
-              <option value="__custom">기타(직접 입력)…</option>
-            </select>
-          )}
-        </Field>
-      )}
-
-      {/* 통화 + 금액 */}
-      <div className={`grid ${sub.foreignOk ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
-        {sub.foreignOk && (
-          <Field label="통화">
-            <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
-              {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
-            </select>
-          </Field>
-        )}
-        <Field label={sub.qty ? `평가금액 (${foreign ? currency : '원'})` : sub.rate ? '현재 잔액 (원)' : `금액 (${foreign ? currency : '원'})`}>
-          <AmountInput value={amount} onChange={setAmount} />
-        </Field>
-      </div>
-      {foreign && (
-        <div className="text-[12px] text-mint-d -mt-1 mb-2">💱 원화 환산 ≈ ₩{krwPreview != null ? won(krwPreview) : '…'} <span className="text-sub">(환율 자동 적용{fxRate ? ` ${fxRate}` : ''})</span></div>
-      )}
-
-      {/* 투자: 수량·평단가 */}
-      {sub.qty && (
-        <>
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="보유 수량"><input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} className={inputCls + ' text-right tnum'} /></Field>
-            <Field label={`평단가 (${foreign ? currency : '원'}, 원금계산)`}><input type="number" value={avgPrice} onChange={(e) => setAvgPrice(e.target.value)} placeholder="산 가격" className={inputCls + ' text-right tnum'} /></Field>
+          <div className="relative">
+            <input value={inst} onChange={(e) => { setInst(e.target.value); setInstOpen(true) }} onFocus={() => setInstOpen(true)} placeholder="검색 · 예: 우리 → 우리은행 (없으면 그냥 입력)" className={inputCls} />
+            {instOpen && instMatches.length > 0 && (
+              <div className="absolute z-10 left-0 right-0 mt-1 bg-surface border border-line rounded-[10px] shadow-lg max-h-52 overflow-auto">
+                {instMatches.map((m) => (
+                  <button key={m} onClick={() => { setInst(m); setInstOpen(false) }} className="w-full text-left px-3 py-2 text-[13px] hover:bg-canvas border-b border-line last:border-0">{m}</button>
+                ))}
+              </div>
+            )}
           </div>
-          {pnlPreview && (
-            <div className="text-[12px] -mt-1 mb-2">
-              원금 {symbolOf(currency)}{won(pnlPreview.principal)} → 평가 {symbolOf(currency)}{won(amount ?? 0)}
-              <b className={pnlPreview.profit >= 0 ? ' text-income' : ' text-expense'}> · 수익 {pnlPreview.profit >= 0 ? '+' : ''}{symbolOf(currency)}{won(pnlPreview.profit)}</b>
+        </Field>
+      )}
+
+      {/* 투자자산: 원금·평단가·수익률 (수량 입력 없음) */}
+      {isInvest ? (
+        <>
+          <Field label={`원금 (투자한 금액${foreign ? `, ${currency}` : ''})`}>
+            <AmountInput value={principal === '' ? null : Number(principal)} onChange={(v) => setPrincipal(v == null ? '' : String(v))} />
+          </Field>
+          {sub.live && (
+            <Field label={`평단가 (선택, ${foreign ? currency : '원'}) · 넣으면 현재시세로 자동평가`}>
+              <input type="number" value={avgPrice} onChange={(e) => setAvgPrice(e.target.value)} placeholder="내가 산 가격" className={inputCls + ' text-right tnum'} />
+            </Field>
+          )}
+          <Field label="수익률 (선택, %) · 시세 자동이 안 되면 직접 입력">
+            <input type="number" value={returnRate} onChange={(e) => setReturnRate(e.target.value)} placeholder="예: 12.5 (마이너스도 가능)" className={inputCls + ' text-right tnum'} />
+          </Field>
+          {principalNum > 0 && (
+            <div className="text-[12.5px] bg-canvas rounded-lg px-3 py-2 mb-2">
+              평가금액 <b>{symbolOf(currency)}{won(investValue)}</b>{foreign && <span className="text-sub"> ≈ ₩{won(investKrw)}</span>}
+              <span className={investProfit >= 0 ? ' text-income' : ' text-expense'}> · 수익 {investProfit >= 0 ? '+' : ''}{symbolOf(currency)}{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(1)}%)</span>
             </div>
           )}
-          {sub.key === 'gold' && <div className="text-[11px] text-sub -mt-1 mb-1">※ 금은 실시간 시세 자동연동이 아직 없어요. 평가금액을 직접 넣어주세요.</div>}
+          {sub.key === 'gold' && <div className="text-[11px] text-sub -mt-1 mb-1">※ 금은 실시간 시세 자동연동이 아직 없어요. 수익률을 직접 넣거나 원금만 입력하세요.</div>}
+        </>
+      ) : (
+        <>
+          <div className={`grid ${sub.foreignOk ? 'grid-cols-2' : 'grid-cols-1'} gap-3`}>
+            {sub.foreignOk && (
+              <Field label="통화">
+                <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
+                  {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                </select>
+              </Field>
+            )}
+            <Field label={sub.rate ? '현재 잔액 (원)' : `금액 (${foreign ? currency : '원'})`}><AmountInput value={amount} onChange={setAmount} /></Field>
+          </div>
+          {foreign && (
+            <div className="text-[12px] text-mint-d -mt-1 mb-2">💱 원화 환산 ≈ ₩{krwPreview != null ? won(krwPreview) : '…'} <span className="text-sub">(환율 자동{fxRate ? ` ${fxRate}` : ''})</span></div>
+          )}
         </>
       )}
 
-      {/* 예적금: 금리·만기·예상이자 */}
       {sub.rate && (
         <>
           <div className="grid grid-cols-2 gap-3">
             <Field label="금리 (연 %)"><input type="number" value={rate} onChange={(e) => setRate(e.target.value)} placeholder="예: 3.5" className={inputCls + ' text-right tnum'} /></Field>
-            <Field label="만기일">
-              <input type="date" value={maturity} disabled={noMaturity} onChange={(e) => setMaturity(e.target.value)} className={inputCls + (noMaturity ? ' opacity-40' : '')} />
-            </Field>
+            <Field label="만기일"><input type="date" value={maturity} disabled={noMaturity} onChange={(e) => setMaturity(e.target.value)} className={inputCls + (noMaturity ? ' opacity-40' : '')} /></Field>
           </div>
           <label className="flex items-center gap-2 text-[12.5px] text-sub -mt-1 mb-2 cursor-pointer">
             <input type="checkbox" checked={noMaturity} onChange={(e) => setNoMaturity(e.target.checked)} /> 만기 없음(무제한)

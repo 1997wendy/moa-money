@@ -6,13 +6,17 @@ let cache: CoinHit[] | null = null
 async function loadMarkets(): Promise<CoinHit[]> {
   if (cache) return cache
   try {
-    const r = await fetch('https://api.upbit.com/v1/market/all?isDetails=false')
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => ctrl.abort(), 8000)
+    const r = await fetch('https://api.upbit.com/v1/market/all', { signal: ctrl.signal })
+    clearTimeout(timer)
     const j = await r.json() as { market: string; korean_name: string; english_name: string }[]
-    cache = j.filter((m) => m.market.startsWith('KRW-')).map((m) => ({
+    const list = j.filter((m) => m.market.startsWith('KRW-')).map((m) => ({
       ticker: m.market.replace('KRW-', ''), korean: m.korean_name, english: m.english_name,
     }))
-  } catch { cache = [] }
-  return cache
+    if (list.length > 0) cache = list // 실패 시 캐시하지 않아 다음에 재시도
+    return list
+  } catch { return [] }
 }
 
 export async function searchCoins(q: string): Promise<CoinHit[]> {

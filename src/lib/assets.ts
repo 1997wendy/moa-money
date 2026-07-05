@@ -45,8 +45,8 @@ export const subOf = (key: string) =>
   SUBTYPES.find((s) => s.key === (ALIAS[key] ?? key)) ?? SUBTYPES[SUBTYPES.length - 1]
 export const groupOf = (key: string) => subOf(key).group
 
-export const BANKS = ['국민은행', '신한은행', '우리은행', '하나은행', '농협은행', 'IBK기업은행', 'SC제일은행', '카카오뱅크', '토스뱅크', '케이뱅크', '새마을금고', '우체국']
-export const SECURITIES = ['키움증권', '미래에셋증권', '삼성증권', 'NH투자증권', '한국투자증권', 'KB증권', '신한투자증권', '토스증권', '대신증권']
+export const BANKS = ['국민은행', '신한은행', '우리은행', '하나은행', '농협은행', 'IBK기업은행', 'SC제일은행', '카카오뱅크', '토스뱅크', '케이뱅크', '새마을금고', '신협', '우체국', 'SBI저축은행', 'OK저축은행', '웰컴저축은행', '페퍼저축은행', '다올저축은행', '한국투자저축은행', '저축은행(기타)']
+export const SECURITIES = ['키움증권', '미래에셋증권', '삼성증권', 'NH투자증권', '한국투자증권', 'KB증권', '신한투자증권', '토스증권', '대신증권', '메리츠증권', '유안타증권']
 export const PENSION_KINDS = ['연금보험', 'IRP', '연금저축펀드', '연금저축보험', '퇴직연금', '기타']
 
 export interface Currency { code: string; label: string; symbol: string }
@@ -63,11 +63,10 @@ export function krwValue(a: Asset): number {
   return a.fxRate ? Math.round(a.amount * a.fxRate) : 0
 }
 
-/** 투자자산 원금·수익 (평단가 있을 때). 자산 통화 기준. */
+/** 투자자산 원금·수익. 자산 통화 기준. */
 export function investPnl(a: Asset): { principal: number; profit: number; pct: number } | null {
-  if (!a.quantity || !a.avgPrice) return null
-  const principal = a.quantity * a.avgPrice
-  if (principal <= 0) return null
+  const principal = a.principal ?? (a.quantity && a.avgPrice ? a.quantity * a.avgPrice : undefined)
+  if (!principal || principal <= 0) return null
   const profit = a.amount - principal
   return { principal, profit, pct: (profit / principal) * 100 }
 }
