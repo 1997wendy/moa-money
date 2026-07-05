@@ -4,7 +4,8 @@ import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
 import { pushNow, pullForce } from '../lib/cloudSync'
-import { createShare, listMyShares, revokeShare, SHARE_MENUS, type Share, type MenuPerm, type MenuPerms } from '../lib/sharing'
+import { useNavigate } from 'react-router-dom'
+import { createShare, listMyShares, revokeShare, listSharedToMe, SHARE_MENUS, type Share, type MenuPerm, type MenuPerms } from '../lib/sharing'
 import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
@@ -304,11 +305,13 @@ const defaultPerms = (): MenuPerms => Object.fromEntries(SHARE_MENUS.map((m) => 
 
 function ShareSection() {
   const { profiles } = useProfile()
+  const nav = useNavigate()
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [profileId, setProfileId] = useState('')
   const [target, setTarget] = useState('')
   const [perms, setPerms] = useState<MenuPerms>(defaultPerms())
   const [shares, setShares] = useState<Share[]>([])
+  const [received, setReceived] = useState<Share[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -316,7 +319,11 @@ function ShareSection() {
   useEffect(() => { supabase.auth.getSession().then(({ data }) => setUserEmail(data.session?.user?.email ?? null)) }, [])
   useEffect(() => { if (userEmail) refresh() }, [userEmail])
   useEffect(() => { if (profiles.length && !profileId) setProfileId(profiles[0].id) }, [profiles, profileId])
-  async function refresh() { setShares(await listMyShares()) }
+  async function refresh() {
+    setShares(await listMyShares())
+    const all = await listSharedToMe()
+    setReceived(all.filter((s) => s.owner_email !== userEmail)) // 내가 나한테 한 건 제외
+  }
 
   const setPerm = (key: string, v: MenuPerm) => setPerms((p) => ({ ...p, [key]: v }))
   const setAll = (v: MenuPerm) => setPerms(Object.fromEntries(SHARE_MENUS.map((m) => [m.key, v])) as MenuPerms)
@@ -403,6 +410,21 @@ function ShareSection() {
                 <button onClick={() => editShare(s)} className="text-[12px] font-bold text-mint-d border border-line rounded-lg px-2.5 py-1 hover:bg-canvas">수정</button>
                 <button onClick={() => revoke(s.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
               </div>
+            </div>
+          ))
+        )}
+      </Card>
+
+      <Card className="mt-3.5">
+        <CardLabel>나에게 공유된 프로필</CardLabel>
+        {received.length === 0 ? <p className="text-[13px] text-sub">받은 공유가 없어요.</p> : (
+          received.map((s) => (
+            <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
+              <div>
+                <div className="text-[13.5px] font-semibold">{s.profile_name}</div>
+                <div className="text-[11px] text-sub">{s.owner_email ?? '상대'} 님이 공유 · {summary(s)}</div>
+              </div>
+              <button onClick={() => nav(`/shared/${s.id}`)} className="text-[12px] font-bold text-white bg-mint rounded-lg px-3 py-1.5 hover:bg-mint-d">보기</button>
             </div>
           ))
         )}
