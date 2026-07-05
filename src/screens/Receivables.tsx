@@ -105,6 +105,23 @@ export default function Receivables() {
             onDelRecur={delRecur}
           />
         ))}
+        {/* 상대가 삭제됐지만 거래에 남아있는 정산(고아) */}
+        {Object.keys(itemsByPerson)
+          .filter((id) => !people.some((p) => p.id === id))
+          .map((id) => (
+            <PersonCard
+              key={id}
+              orphan
+              person={{ id, profileId, name: '(삭제된 상대)', kind: 'other' }}
+              items={itemsByPerson[id]}
+              onToggle={toggle}
+              onSettleAll={settleAll}
+              onEdit={() => {}}
+              onDelete={() => {}}
+              onAddRecur={() => {}}
+              onDelRecur={delRecur}
+            />
+          ))}
       </div>
 
       <Fab onClick={() => { setEditPerson(undefined); setPersonModal(true) }} label="정산 상대 추가" />
@@ -115,11 +132,12 @@ export default function Receivables() {
 }
 
 function PersonCard({
-  person, items, onToggle, onSettleAll, onEdit, onDelete, onAddRecur, onDelRecur,
+  person, items, onToggle, onSettleAll, onEdit, onDelete, onAddRecur, onDelRecur, orphan,
 }: {
   person: Person; items: Item[]
   onToggle: (it: Item) => void; onSettleAll: (items: Item[]) => void
   onEdit: () => void; onDelete: () => void; onAddRecur: () => void; onDelRecur: (id?: string) => void
+  orphan?: boolean
 }) {
   const unpaidIn = items.filter((i) => !i.settled && i.dir === 'in').reduce((s, i) => s + i.amount, 0)
   const unpaidOut = items.filter((i) => !i.settled && i.dir === 'out').reduce((s, i) => s + i.amount, 0)
@@ -132,8 +150,8 @@ function PersonCard({
       <div className="flex items-center justify-between mb-3">
         <div className="font-bold text-[15px] flex items-center gap-1.5">
           {kindEmoji} {person.name}
-          <button onClick={onEdit} className="text-sub hover:text-ink p-0.5"><Pencil size={13} /></button>
-          <button onClick={onDelete} className="text-sub hover:text-expense p-0.5"><Trash2 size={13} /></button>
+          {!orphan && <button onClick={onEdit} className="text-sub hover:text-ink p-0.5"><Pencil size={13} /></button>}
+          {!orphan && <button onClick={onDelete} className="text-sub hover:text-expense p-0.5"><Trash2 size={13} /></button>}
         </div>
         <div className="text-right">
           {net === 0 ? (
@@ -177,9 +195,11 @@ function PersonCard({
             <CheckCheck size={16} /> 전체 정산완료
           </button>
         )}
-        <button onClick={onAddRecur} className="py-2 px-3 rounded-[10px] border border-line text-sub text-[12.5px] font-bold flex items-center gap-1 hover:bg-canvas">
-          <Plus size={14} /> 정기 항목
-        </button>
+        {!orphan && (
+          <button onClick={onAddRecur} className="py-2 px-3 rounded-[10px] border border-line text-sub text-[12.5px] font-bold flex items-center gap-1 hover:bg-canvas">
+            <Plus size={14} /> 정기 항목
+          </button>
+        )}
       </div>
     </Card>
   )
