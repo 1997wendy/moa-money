@@ -5,6 +5,7 @@ import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
 import { useStockSync } from '../hooks/useStockSync'
+import { searchStocks, getStockPrice, type StockHit } from '../lib/stockApi'
 import { won } from '../lib/format'
 import {
   SUBTYPES, GROUPS, BANKS, SECURITIES, CURRENCIES, subOf, groupOf, krwValue,
@@ -109,12 +110,18 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [ticker, setTicker] = useState('')
   const [avgPrice, setAvgPrice] = useState('')
   const [loadingFx, setLoadingFx] = useState(false)
+  // 해외주식 검색
+  const [q, setQ] = useState('')
+  const [hits, setHits] = useState<StockHit[]>([])
+  const [searching, setSearching] = useState(false)
+  const [livePrice, setLivePrice] = useState<number | null>(null)
 
   const sub = subOf(type)
   const isStockEtf = sub.key === 'stock' || sub.key === 'etf'
 
   useEffect(() => {
     if (!open) return
+    setQ(''); setHits([]); setLivePrice(null)
     if (edit) {
       setType(edit.type); setName(edit.name); setInst(edit.institution ?? ''); setInstCustom(false)
       setMarket(edit.market ?? 'kr'); setCurrency(edit.currency ?? 'KRW'); setFxRate(edit.fxRate ? String(edit.fxRate) : '')
@@ -125,6 +132,26 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       setCurrency('KRW'); setFxRate(''); setAmount(null); setQuantity(''); setTicker(''); setAvgPrice('')
     }
   }, [open, edit])
+
+  // 검색 디바운스
+  useEffect(() => {
+    if (!isStockEtf || !q.trim()) { setHits([]); return }
+    setSearching(true)
+    const t = setTimeout(async () => { setHits(await searchStocks(q)); setSearching(false) }, 400)
+    return () => clearTimeout(t)
+  }, [q, isStockEtf])
+
+  // 현재가 × 수량 → 평가액 자동
+  useEffect(() => {
+    if (isStockEtf && livePrice && Number(quantity) > 0) setAmount(Math.round(Number(quantity) * livePrice))
+  }, [livePrice, quantity, isStockEtf])
+
+  async function pickStock(h: StockHit) {
+    setName(h.description || h.symbol); setTicker(h.symbol); setMarket('us'); setCurrency('USD')
+    setQ(''); setHits([])
+    const p = await getStockPrice(h.symbol)
+    setLivePrice(p)
+  }
 
   const instList = sub.inst === 'bank' ? BANKS : sub.inst === 'securities' ? SECURITIES : null
   const foreign = currency !== 'KRW'
@@ -178,6 +205,27 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
               <button key={mk} onClick={() => setMarket(mk)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${market === mk ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{mk === 'kr' ? '국내' : '해외'}</button>
             ))}
           </div>
+        </Field>
+      )}
+
+      {isStockEtf && market === 'us' && (
+        <Field label="종목 검색 (해외)">
+          <div className="relative">
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="회사명·티커로 검색 (예: apple, AAPL)" className={inputCls} />
+            {(searching || hits.length > 0 || (q.trim() && !searching)) && (
+              <div className="absolute z-10 left-0 right-0 mt-1 bg-surface border border-line rounded-[10px] shadow-lg max-h-56 overflow-auto">
+                {searching && <div className="px-3 py-2 text-[12px] text-sub">검색 중…</div>}
+                {hits.map((h) => (
+                  <button key={h.symbol} onClick={() => pickStock(h)} className="w-full text-left px-3 py-2 hover:bg-canvas border-b border-line last:border-0">
+                    <div className="text-[13px] font-semibold">{h.symbol}</div>
+                    <div className="text-[11px] text-sub truncate">{h.description}</div>
+                  </button>
+                ))}
+                {!searching && hits.length === 0 && q.trim() && <div className="px-3 py-2 text-[12px] text-sub">결과 없음 (미국 상장 심볼만 지원)</div>}
+              </div>
+            )}
+          </div>
+          {livePrice != null && <div className="text-[12px] text-mint-d mt-1">✓ {ticker} 현재가 ${livePrice} · 수량 넣으면 평가액 자동</div>}
         </Field>
       )}
 

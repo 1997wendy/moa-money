@@ -1,7 +1,5 @@
-// 해외주식 시세 Edge Function (Finnhub)
-// Supabase → Edge Functions → 새 함수 'stock-price' 로 이 코드 붙여넣고 Deploy.
-// 그리고 함수/프로젝트 Secrets 에 FINNHUB_KEY = 발급받은 키 를 등록.
-// (Verify JWT with legacy secret 은 OFF 권장 — 코드에서 직접 인증 확인)
+// 해외주식: 시세(quote) + 종목검색(search) — Finnhub
+// Supabase → Edge Functions → 'stock-price' 에 이 코드로 재배포. FINNHUB_KEY secret 필요. Verify JWT OFF.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 const cors = {
@@ -15,7 +13,6 @@ Deno.serve(async (req) => {
   const json = (b: unknown, s = 200) =>
     new Response(JSON.stringify(b), { status: s, headers: { ...cors, 'Content-Type': 'application/json' } })
   try {
-    // 로그인 사용자만 (우리 Finnhub 키 보호)
     const token = (req.headers.get('Authorization') ?? '').replace('Bearer ', '')
     const admin = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!)
     const { data: u, error } = await admin.auth.getUser(token)
@@ -24,9 +21,22 @@ Deno.serve(async (req) => {
     const key = Deno.env.get('FINNHUB_KEY')
     if (!key) return json({ error: 'no FINNHUB_KEY' }, 500)
 
-    const { symbols } = await req.json() as { symbols: string[] }
+    const body = await req.json() as { search?: string; symbols?: string[] }
+
+    // 종목 검색
+    if (body.search) {
+      const r = await fetch(`https://finnhub.io/api/v1/search?q=${encodeURIComponent(body.search)}&token=${key}`)
+      const d = await r.json()
+      const results = (d.result ?? [])
+        .filter((x: { symbol: string; type?: string }) => x.symbol && !x.symbol.includes('.'))
+        .slice(0, 15)
+        .map((x: { symbol: string; description: string; type?: string }) => ({ symbol: x.symbol, description: x.description, type: x.type }))
+      return json({ results })
+    }
+
+    // 시세
     const prices: Record<string, number> = {}
-    for (const s of (symbols ?? []).slice(0, 30)) {
+    for (const s of (body.symbols ?? []).slice(0, 30)) {
       const r = await fetch(`https://finnhub.io/api/v1/quote?symbol=${encodeURIComponent(s)}&token=${key}`)
       const d = await r.json()
       if (typeof d.c === 'number' && d.c > 0) prices[s] = d.c
