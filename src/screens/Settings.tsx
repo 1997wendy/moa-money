@@ -306,6 +306,7 @@ function ShareSection() {
   const [target, setTarget] = useState('')
   const [perms, setPerms] = useState<MenuPerms>(defaultPerms())
   const [shares, setShares] = useState<Share[]>([])
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
 
@@ -317,24 +318,27 @@ function ShareSection() {
   const setPerm = (key: string, v: MenuPerm) => setPerms((p) => ({ ...p, [key]: v }))
   const setAll = (v: MenuPerm) => setPerms(Object.fromEntries(SHARE_MENUS.map((m) => [m.key, v])) as MenuPerms)
 
+  function resetForm() {
+    setEditingId(null); setTarget(''); setPerms(defaultPerms())
+    if (profiles[0]) setProfileId(profiles[0].id)
+  }
   async function create() {
     const p = profiles.find((x) => x.id === profileId)
     if (!p || !target.trim()) { setMsg('프로필과 상대 이메일을 확인하세요.'); return }
     setBusy(true)
     const r = await createShare({ profileId: p.id, profileName: p.name, targetEmail: target, menuPerms: perms })
     setBusy(false)
-    if (r === 'ok') { setMsg(`'${p.name}' 프로필을 ${target}에게 공유했어요.`); setTarget(''); refresh() }
+    if (r === 'ok') { setMsg(editingId ? '공유를 수정했어요.' : `'${p.name}' 프로필을 ${target}에게 공유했어요.`); resetForm(); refresh() }
     else if (r === 'noauth') setMsg('먼저 데이터·백업 탭에서 로그인하세요.')
     else setMsg('공유 실패. 상대 이메일/네트워크를 확인하세요.')
   }
-  async function revoke(id: string) { if (!confirm('이 공유를 취소할까요?')) return; await revokeShare(id); refresh() }
-  function loadShare(s: Share) {
-    setTarget(s.target_email)
+  async function revoke(id: string) { if (!confirm('이 공유를 삭제할까요?')) return; await revokeShare(id); if (editingId === id) resetForm(); refresh() }
+  function editShare(s: Share) {
+    setEditingId(s.id); setTarget(s.target_email)
     setPerms({ ...defaultPerms(), ...(s.menu_perms ?? {}) })
     const p = profiles.find((x) => x.name === s.profile_name)
     if (p) setProfileId(p.id)
-    setMsg('불러왔어요. 권한을 바꾼 뒤 «공유 만들기»를 다시 누르면 갱신돼요.')
-    window.scrollTo(0, 0)
+    setMsg(''); window.scrollTo(0, 0)
   }
 
   const summary = (s: Share) => {
@@ -352,10 +356,10 @@ function ShareSection() {
   return (
     <>
       <Card className="mb-3.5">
-        <CardLabel>🤝 프로필 공유하기</CardLabel>
-        <p className="text-[12px] text-sub mb-3">내 프로필을 다른 사람 이메일로 공유해요. 상대가 그 이메일로 로그인하면 <b className="text-ink">메뉴별 권한대로</b> 보게 돼요. <b className="text-ink">상대가 보는 화면은 다음 업데이트에서 열려요.</b></p>
-        <Field label="공유할 프로필"><select value={profileId} onChange={(e) => setProfileId(e.target.value)} className={inputCls}>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
-        <Field label="상대 이메일"><input value={target} onChange={(e) => setTarget(e.target.value)} placeholder="sibling@email.com" className={inputCls} /></Field>
+        <CardLabel>{editingId ? '✏️ 공유 수정 중' : '🤝 새 공유 만들기'}</CardLabel>
+        <p className="text-[12px] text-sub mb-3">내 프로필을 다른 사람 이메일로 공유해요. 상대가 그 이메일로 로그인하면 <b className="text-ink">메뉴별 권한대로</b> 보게 돼요.</p>
+        <Field label="공유할 프로필"><select value={profileId} onChange={(e) => setProfileId(e.target.value)} disabled={!!editingId} className={inputCls + (editingId ? ' bg-canvas text-sub' : '')}>{profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>
+        <Field label="상대 이메일"><input value={target} onChange={(e) => setTarget(e.target.value)} disabled={!!editingId} placeholder="sibling@email.com" className={inputCls + (editingId ? ' bg-canvas text-sub' : '')} /></Field>
 
         <div className="flex items-center justify-between mb-1.5">
           <span className="text-[12px] font-semibold text-sub">메뉴별 권한</span>
@@ -376,20 +380,26 @@ function ShareSection() {
           ))}
         </div>
 
-        <Button onClick={create} disabled={busy}>공유 만들기</Button>
+        <div className="flex gap-2">
+          <Button onClick={create} disabled={busy}>{editingId ? '수정 저장' : '공유 만들기'}</Button>
+          {editingId && <Button variant="line" onClick={resetForm}>취소</Button>}
+        </div>
         {msg && <div className="mt-3 text-[12.5px] bg-mint-l text-mint-d rounded-lg px-3 py-2">{msg}</div>}
       </Card>
 
       <Card>
         <CardLabel>공유 중인 목록</CardLabel>
-        {shares.length === 0 ? <p className="text-[13px] text-sub">아직 공유한 게 없어요.</p> : (
+        {shares.length === 0 ? <p className="text-[13px] text-sub">아직 공유한 게 없어요. 위에서 만들어 보세요.</p> : (
           shares.map((s) => (
-            <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
-              <button onClick={() => loadShare(s)} className="text-left flex-1 min-w-0 hover:opacity-70">
+            <div key={s.id} className={`flex items-center justify-between py-2 border-b border-line last:border-0 ${editingId === s.id ? 'bg-mint-l -mx-2 px-2 rounded-lg' : ''}`}>
+              <div className="min-w-0">
                 <div className="text-[13.5px] font-semibold">{s.profile_name} → {s.target_email}</div>
-                <div className="text-[11px] text-sub">{summary(s)} · 눌러서 수정</div>
-              </button>
-              <button onClick={() => revoke(s.id)} className="text-sub hover:text-expense p-1 shrink-0"><Trash2 size={16} /></button>
+                <div className="text-[11px] text-sub">{summary(s)}</div>
+              </div>
+              <div className="flex items-center gap-1 shrink-0">
+                <button onClick={() => editShare(s)} className="text-[12px] font-bold text-mint-d border border-line rounded-lg px-2.5 py-1 hover:bg-canvas">수정</button>
+                <button onClick={() => revoke(s.id)} className="text-sub hover:text-expense p-1"><Trash2 size={16} /></button>
+              </div>
             </div>
           ))
         )}
