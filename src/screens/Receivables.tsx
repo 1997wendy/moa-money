@@ -6,7 +6,7 @@ import { useProfile } from '../state/profile'
 import { won, thisMonth, monthLabel, addMonth } from '../lib/format'
 import { Card, PageHeader, Empty, Fab, Modal, Field, Button, inputCls } from '../components/ui'
 import AmountInput from '../components/AmountInput'
-import type { Person, PersonKind, RecurringReceivable } from '../db/types'
+import type { Person, RecurringReceivable } from '../db/types'
 
 interface Item {
   kind: 'once' | 'recur'
@@ -185,33 +185,19 @@ function PersonCard({
   )
 }
 
-const KINDS: [PersonKind, string][] = [['dad', '아빠'], ['mom', '엄마'], ['sibling', '동생'], ['other', '기타']]
-
 function PersonModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Person; profileId: string }) {
   const [name, setName] = useState('')
-  const [kind, setKind] = useState<PersonKind>('other')
-  useEffect(() => {
-    if (!open) return
-    if (edit) { setName(edit.name); setKind(edit.kind) }
-    else { setName(''); setKind('other') }
-  }, [open, edit])
+  useEffect(() => { if (open) setName(edit ? edit.name : '') }, [open, edit])
 
   async function save() {
     if (!name.trim()) return
-    await repo.upsertPerson({ id: edit?.id ?? uid(), profileId, name: name.trim(), kind })
+    await repo.upsertPerson({ id: edit?.id ?? uid(), profileId, name: name.trim(), kind: edit?.kind ?? 'other' })
     onClose()
   }
 
   return (
     <Modal open={open} onClose={onClose} title={edit ? '정산 상대 수정' : '정산 상대 추가'}>
-      <Field label="이름"><input value={name} onChange={(e) => setName(e.target.value)} placeholder="예: 아빠 / 엄마 / 동생 이름" className={inputCls} autoFocus /></Field>
-      <Field label="분류(아이콘)">
-        <div className="flex gap-1.5">
-          {KINDS.map(([k, l]) => (
-            <button key={k} onClick={() => setKind(k)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${kind === k ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{l}</button>
-          ))}
-        </div>
-      </Field>
+      <Field label="이름"><input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} placeholder="예: 아빠 / 엄마 / 동생 이름" className={inputCls} autoFocus /></Field>
       <div className="flex gap-2 mt-4 justify-end">
         <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>
