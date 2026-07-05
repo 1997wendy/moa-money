@@ -4,6 +4,7 @@ import { RefreshCw } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
+import { useStockSync } from '../hooks/useStockSync'
 import { won } from '../lib/format'
 import {
   SUBTYPES, GROUPS, BANKS, SECURITIES, CURRENCIES, subOf, groupOf, krwValue,
@@ -17,6 +18,7 @@ const symbolOf = (code?: string) => CURRENCIES.find((c) => c.code === (code ?? '
 export default function Assets() {
   const { profileId } = useProfile()
   useCoinSync(profileId) // 진입 시 코인 시세 자동 갱신
+  useStockSync(profileId) // 진입 시 해외주식 시세 자동 갱신
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Asset | undefined>()

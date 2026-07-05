@@ -4,6 +4,7 @@ import { History, Trash2 } from 'lucide-react'
 import { repo } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
+import { useStockSync } from '../hooks/useStockSync'
 import { won, signed, thisMonth, addMonth, todayISO } from '../lib/format'
 import { groupOf, krwValue } from '../lib/assets'
 import { detectFixed } from '../lib/fixedCost'
@@ -42,6 +43,7 @@ const monthNet = (txs: Transaction[], ym: string) => {
 export default function Investment() {
   const { profileId, profile } = useProfile()
   useCoinSync(profileId)
+  useStockSync(profileId)
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
   const notes = useLiveQuery(() => (profileId ? repo.listCoachNotes(profileId) : []), [profileId], [])
