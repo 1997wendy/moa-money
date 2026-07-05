@@ -237,6 +237,16 @@ function CloudSection() {
     setMsg('초기화했어요. 새로고침할게요…')
     setTimeout(() => location.reload(), 700)
   }
+  async function deleteAccount() {
+    if (!confirm('정말 회원 탈퇴할까요?\n계정과 모든 데이터가 영구 삭제되고 되돌릴 수 없어요.')) return
+    setBusy(true)
+    const { error } = await supabase.functions.invoke('delete-account', { method: 'POST' })
+    setBusy(false)
+    if (error) { setMsg('회원 탈퇴 실패: ' + error.message + ' (탈퇴 함수가 배포됐는지 확인해 주세요)'); return }
+    await repo.wipeLocal()
+    await supabase.auth.signOut()
+    setMsg('회원 탈퇴되었어요.')
+  }
 
   async function upload() {
     setBusy(true)
@@ -294,7 +304,10 @@ function CloudSection() {
               <input type="password" value={newPw} onChange={(e) => setNewPw(e.target.value)} placeholder="새 비밀번호(6자+)" className={inputCls + ' flex-1'} />
               <Button variant="line" onClick={changePw}>변경</Button>
             </div>
-            <button onClick={resetData} className="text-[12px] text-expense hover:underline mt-3">내 데이터 초기화 (빈 상태로)</button>
+            <div className="flex gap-4 mt-3">
+              <button onClick={resetData} className="text-[12px] text-sub hover:text-ink hover:underline">내 데이터 초기화 (빈 상태로)</button>
+              <button onClick={deleteAccount} className="text-[12px] text-expense hover:underline">회원 탈퇴</button>
+            </div>
           </div>
         </>
       )}
