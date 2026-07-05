@@ -18,6 +18,7 @@ export default function Ledger() {
   const [view, setView] = useState<View>('all')
   const [cat, setCat] = useState('전체')
   const [search, setSearch] = useState('')
+  const [sort, setSort] = useState<'new' | 'old'>('new')
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Transaction | undefined>()
 
@@ -57,8 +58,8 @@ export default function Ledger() {
       t.merchant.toLowerCase().includes(q) ||
       (t.memo ?? '').toLowerCase().includes(q) ||
       t.splits.some((s) => s.category.toLowerCase().includes(q)))
-    return rows
-  }, [txs, view, cat, search])
+    return sort === 'old' ? [...rows].reverse() : rows
+  }, [txs, view, cat, search, sort])
 
   function openAdd() { setEdit(undefined); setModal(true) }
   function openEdit(t: Transaction) { setEdit(t); setModal(true) }
@@ -87,11 +88,15 @@ export default function Ledger() {
             </button>
           ))}
         </div>
-        <div className="relative flex-1 min-w-[160px]">
+        <div className="relative flex-1 min-w-[140px]">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-sub" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="가맹점·메모·카테고리 검색" className={inputCls + ' pl-9'} />
           {search && <button onClick={() => setSearch('')} className="absolute right-2 top-1/2 -translate-y-1/2 text-sub hover:text-ink text-[16px]">×</button>}
         </div>
+        <select value={sort} onChange={(e) => setSort(e.target.value as 'new' | 'old')} className={inputCls + ' w-auto text-[12.5px] py-2'}>
+          <option value="new">최신순</option>
+          <option value="old">오래된순</option>
+        </select>
       </div>
 
       {/* 합계 */}

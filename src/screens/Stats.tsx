@@ -24,6 +24,7 @@ function monthNet(txs: Transaction[], ym: string) {
 export default function Stats() {
   const { profileId } = useProfile()
   const [month, setMonth] = useState(thisMonth())
+  const [tab, setTab] = useState<'now' | 'trend' | 'goal'>('now')
   const [modal, setModal] = useState(false)
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
@@ -128,6 +129,13 @@ export default function Stats() {
         <button onClick={() => setMonth(addMonth(month, 1))} className="p-1.5 rounded-lg hover:bg-line/60 text-sub"><ChevronRight size={18} /></button>
       </div>
 
+      <div className="flex bg-canvas rounded-[10px] p-1 mb-4 w-fit">
+        {([['now', '이번 달'], ['trend', '추이·연도'], ['goal', '목표']] as const).map(([k, l]) => (
+          <button key={k} onClick={() => setTab(k)} className={`px-4 py-1.5 rounded-[8px] text-[13px] font-bold transition-colors ${tab === k ? 'bg-surface shadow-sm text-ink' : 'text-sub'}`}>{l}</button>
+        ))}
+      </div>
+
+      {tab === 'now' && (<>
       <Card className="mb-3.5">
         <CardLabel>📝 {monthLabel(month)} 회고</CardLabel>
         <MonthMemo profileId={profileId} month={month} />
@@ -180,8 +188,9 @@ export default function Stats() {
           </tbody>
         </table>
       </Card>
+      </>)}
 
-      {/* 목표 */}
+      {tab === 'goal' && (
       <Card className="mt-3.5">
         <CardLabel>목표 {activeGoal ? `· ${activeGoal.label ?? compact(activeGoal.targetAmount)}` : ''}</CardLabel>
         {activeGoal ? (
@@ -209,8 +218,9 @@ export default function Stats() {
           </div>
         )}
       </Card>
+      )}
 
-      {/* 순자산 추이 */}
+      {tab === 'trend' && (<>
       <Card className="mt-3.5">
         <CardLabel>순자산 추이(추정) · 최근 6개월</CardLabel>
         <div className="flex items-end gap-3 h-[150px] pt-4">
@@ -262,8 +272,9 @@ export default function Stats() {
         )}
         {fixed.length > 0 && <div className="text-[11px] text-sub mt-2">💡 안 쓰는 구독이 있다면 여기서 정리 대상을 찾아보세요.</div>}
       </Card>
+      </>)}
 
-      <Fab onClick={() => setModal(true)} label="목표 추가" />
+      {tab === 'goal' && <Fab onClick={() => setModal(true)} label="목표 추가" />}
       <GoalModal open={modal} onClose={() => setModal(false)} profileId={profileId} defaultFrom={month} />
     </div>
   )

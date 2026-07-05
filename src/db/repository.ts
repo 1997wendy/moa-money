@@ -60,7 +60,8 @@ export const repo = {
     let rows = await db.transactions.where('profileId').equals(profileId).toArray()
     if (q.month) rows = rows.filter((t) => t.date.startsWith(q.month!))
     if (q.type) rows = rows.filter((t) => t.type === q.type)
-    return rows.sort((a, b) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+    // 날짜 내림차순, 같은 날짜면 입력(생성)시각 내림차순 → 방금 넣은 게 위로
+    return rows.sort((a, b) => (a.date !== b.date ? (a.date < b.date ? 1 : -1) : (a.createdAt < b.createdAt ? 1 : -1)))
   },
   upsertTransaction: (t: Transaction) => db.transactions.put(t),
   deleteTransaction: (id: ID) => db.transactions.delete(id),
