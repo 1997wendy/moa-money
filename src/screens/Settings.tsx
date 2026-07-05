@@ -15,7 +15,10 @@ const TABS: [Tab, string][] = [['data', '데이터·백업'], ['account', '사�
 
 export default function Settings() {
   const { profiles, profile, profileId, setProfileId } = useProfile()
-  const [tab, setTab] = useState<Tab>('data')
+  const [tab, setTab] = useState<Tab>(() => {
+    const h = window.location.hash.replace('#', '')
+    return (['data', 'account', 'share', 'menu'].includes(h) ? h : 'data') as Tab
+  })
   const fileRef = useRef<HTMLInputElement>(null)
   const [msg, setMsg] = useState('')
   const [newName, setNewName] = useState('')
