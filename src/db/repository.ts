@@ -132,6 +132,22 @@ export const repo = {
       profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes,
     }
   },
+  /** 한 프로필의 데이터만 뽑아서 내보내기 (공유용) */
+  async exportProfile(profileId: ID) {
+    const by = (t: { where: (k: string) => { equals: (v: string) => { toArray: () => Promise<unknown[]> } } }) =>
+      t.where('profileId').equals(profileId).toArray()
+    const [profile, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes] =
+      await Promise.all([
+        db.profiles.get(profileId),
+        by(db.assets), by(db.transactions), by(db.schedules), by(db.cards), by(db.goals),
+        by(db.people), by(db.recurring), by(db.categories), by(db.coachNotes),
+      ])
+    return {
+      app: 'money-app', version: 2, shared: true, profileId,
+      profiles: profile ? [profile] : [],
+      assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes,
+    }
+  },
   async importAll(data: Record<string, unknown>) {
     const arr = <T,>(key: string): T[] => (Array.isArray(data[key]) ? (data[key] as T[]) : [])
     const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories, db.coachNotes]
