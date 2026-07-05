@@ -1,8 +1,8 @@
-// 좌측 사이드바(그룹화) + 사용자 전환 + 콘텐츠 영역
+// 반응형 레이아웃: 데스크톱=고정 사이드바 / 모바일=햄버거 드로어
 import { useState } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import {
-  LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock, LineChart,
+  LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock, LineChart, Menu, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useProfile } from '../state/profile'
@@ -46,22 +46,36 @@ const GROUPS: Group[] = [
 export default function AppShell() {
   const { profiles, profileId, profile, setProfileId, isLocked } = useProfile()
   useSyncManager()
+  const [drawer, setDrawer] = useState(false)
   const hidden = new Set(profile?.hiddenMenus ?? [])
   const locked = isLocked(profileId)
+  const close = () => setDrawer(false)
 
   return (
-    <div className="flex min-h-full">
-      <aside className="w-[212px] shrink-0 bg-surface border-r border-line flex flex-col fixed inset-y-0 left-0 overflow-y-auto">
+    <div className="min-h-full">
+      {/* 모바일 상단바 */}
+      <header className="md:hidden fixed top-0 inset-x-0 z-30 h-14 bg-surface border-b border-line flex items-center gap-3 px-4">
+        <button onClick={() => setDrawer(true)} aria-label="메뉴" className="p-1 -ml-1 text-ink"><Menu size={22} /></button>
+        <Logo size={22} />
+        <span className="font-extrabold text-[16px]">모아</span>
+      </header>
+
+      {/* 드로어 배경 */}
+      {drawer && <div className="md:hidden fixed inset-0 z-40 bg-black/30" onClick={close} />}
+
+      {/* 사이드바 (모바일=드로어) */}
+      <aside className={`w-[240px] md:w-[212px] bg-surface border-r border-line flex flex-col fixed inset-y-0 left-0 z-50 overflow-y-auto transition-transform duration-200 md:translate-x-0 ${drawer ? 'translate-x-0' : '-translate-x-full md:translate-x-0'}`}>
         <div className="px-5 py-4 flex items-center gap-2">
           <Logo size={26} />
           <span className="font-extrabold text-[16px] tracking-tight">모아</span>
+          <button onClick={close} className="md:hidden ml-auto text-sub p-1"><X size={20} /></button>
         </div>
 
         <div className="px-3 mb-3">
           <div className="bg-mint-l rounded-[12px] p-3">
             <div className="flex items-center justify-between mb-1.5">
               <span className="text-[11px] font-bold text-mint-d">프로필</span>
-              <NavLink to="/settings#account" className="text-[11px] font-bold text-mint-d hover:underline">관리 ›</NavLink>
+              <NavLink to="/settings#account" onClick={close} className="text-[11px] font-bold text-mint-d hover:underline">관리 ›</NavLink>
             </div>
             <select value={profileId} onChange={(e) => setProfileId(e.target.value)} className="w-full border border-line rounded-[8px] px-2 py-2 text-[13px] font-bold bg-surface outline-none">
               {profiles.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
@@ -76,19 +90,19 @@ export default function AppShell() {
             return (
               <div key={gi} className="mb-1.5">
                 {g.title && <div className="text-[10.5px] font-bold text-sub/70 px-3 pt-2 pb-1 uppercase tracking-wide">{g.title}</div>}
-                {items.map((it) => <NavItem key={it.key} item={it} />)}
+                {items.map((it) => <NavItem key={it.key} item={it} onClick={close} />)}
               </div>
             )
           })}
         </nav>
 
         <div className="px-3 pb-2 border-t border-line pt-2">
-          <NavItem item={{ key: 'settings', to: '/settings', label: '설정', icon: Settings }} />
+          <NavItem item={{ key: 'settings', to: '/settings', label: '설정', icon: Settings }} onClick={close} />
         </div>
-        <div className="px-5 py-2 text-[11px] text-sub">로컬 저장 · v0.3</div>
+        <div className="px-5 py-2 text-[11px] text-sub">v0.3</div>
       </aside>
 
-      <main className="flex-1 ml-[212px] px-7 pt-7 pb-28 max-w-[1000px]">
+      <main className="md:ml-[212px] px-4 md:px-7 pt-[72px] md:pt-7 pb-28 max-w-[1000px]">
         {locked ? <LockScreen /> : <Outlet />}
       </main>
     </div>
@@ -126,12 +140,13 @@ function LockScreen() {
   )
 }
 
-function NavItem({ item }: { item: Item }) {
+function NavItem({ item, onClick }: { item: Item; onClick?: () => void }) {
   const { icon: Icon, to, label, end } = item
   return (
     <NavLink
       to={to}
       end={end}
+      onClick={onClick}
       className={({ isActive }) =>
         `flex items-center gap-2.5 px-3 py-2.5 rounded-[10px] text-[13.5px] font-semibold mb-0.5 transition-colors ${
           isActive ? 'bg-mint text-white' : 'text-sub hover:bg-canvas hover:text-ink'
