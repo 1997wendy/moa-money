@@ -69,7 +69,7 @@ export default function Settings() {
 
   return (
     <div>
-      <PageHeader title="설정" desc="계정·사용자·잠금·백업" />
+      <PageHeader title="설정" />
 
       <div className="flex bg-canvas rounded-[10px] p-1 mb-4 w-fit">
         {TABS.map(([k, label]) => (

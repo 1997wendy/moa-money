@@ -1,12 +1,13 @@
 // 반응형 레이아웃: 데스크톱=고정 사이드바 / 모바일=햄버거 드로어
-import { useState } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
+import { useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
 import {
   LayoutGrid, Notebook, PieChart, Calendar, Receipt, TrendingUp, CreditCard, Settings, Lock, LineChart, Menu, X,
 } from 'lucide-react'
 import type { LucideIcon } from 'lucide-react'
 import { useProfile } from '../state/profile'
 import { useSyncManager } from '../hooks/useSyncManager'
+import { useNetWorthSnapshot } from '../hooks/useNetWorthSnapshot'
 import Logo from './Logo'
 
 interface Item { key: string; to: string; label: string; icon: LucideIcon; end?: boolean; hideable?: boolean }
@@ -46,6 +47,10 @@ const GROUPS: Group[] = [
 export default function AppShell() {
   const { profiles, profileId, profile, setProfileId, isLocked } = useProfile()
   useSyncManager()
+  useNetWorthSnapshot() // 앱 열면 이 달 순자산 자동 기록
+  const location = useLocation()
+  // 메뉴 이동하면 항상 화면 맨 위부터 (모바일에서 스크롤 위치가 남는 문제)
+  useEffect(() => { window.scrollTo(0, 0) }, [location.pathname])
   const [drawer, setDrawer] = useState(false)
   const hidden = new Set(profile?.hiddenMenus ?? [])
   const locked = isLocked(profileId)
@@ -77,7 +82,7 @@ export default function AppShell() {
               <span className="text-[11px] font-bold text-mint-d">프로필</span>
               <NavLink to="/settings#account" onClick={close} className="text-[11px] font-bold text-mint-d hover:underline">관리 ›</NavLink>
             </div>
-            <select value={profileId} onChange={(e) => setProfileId(e.target.value)} className="w-full border border-line rounded-[8px] px-2 py-2 text-[13px] font-bold bg-surface outline-none">
+            <select value={profileId} onChange={(e) => setProfileId(e.target.value)} className="w-full border border-line rounded-[8px] px-3 py-2 text-[13px] font-bold bg-surface outline-none">
               {profiles.map((p) => (<option key={p.id} value={p.id}>{p.name}</option>))}
             </select>
           </div>

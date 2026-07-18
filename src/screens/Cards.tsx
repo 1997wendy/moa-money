@@ -3,44 +3,89 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus, Trash2 } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
-import { won, thisMonth, monthLabel } from '../lib/format'
-import { ruleMatches, ruleSaving } from '../lib/cardAdvisor'
+import { won, thisMonth, addMonth } from '../lib/format'
+import { ruleMatches, pickTier, ruleTiers, isExcluded, activeSpecialCap, evalRuleMonth, cardSpend } from '../lib/cardAdvisor'
 import { Card as Box, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
-import type { BenefitRule, Card, Transaction } from '../db/types'
+import type { BenefitRule, BenefitTier, Card, Transaction } from '../db/types'
+
+// 활성 구간의 적립률/액 라벨 (구간 없으면 조건 미달)
+const rateLabel = (kind: 'rate' | 'fixed', tier?: BenefitTier | null) =>
+  !tier ? '조건 미달' : kind === 'rate' ? `${tier.value}%` : `건당 ${won(tier.value)}원`
+// 활성 구간의 조건/횟수 요약
+function tierCond(tier?: BenefitTier | null): string {
+  if (!tier) return ''
+  return [tier.minSpend ? `건당 ${won(tier.minSpend)}↑` : '', tier.maxCount ? `월${tier.maxCount}회` : ''].filter(Boolean).join(' · ')
+}
+
+// 한도 대비 남은 적립 + (정률이면) 얼마 더 쓰면 소진되는지
+function Remain({ cap, used, kind, value }: { cap: number; used: number; kind: 'rate' | 'fixed'; value?: number }) {
+  const left = Math.max(0, cap - used)
+  if (left <= 0) return <div className="text-[11px] text-expense mt-0.5">한도 소진! 이 혜택은 다른 카드로.</div>
+  const spend = kind === 'rate' && value ? ` · 약 ₩${won(Math.round(left / (value / 100)))} 더 쓰면 소진` : ''
+  return <div className="text-[11px] text-sub mt-0.5">남은 적립 ₩{won(left)}{spend}</div>
+}
+
+// 제외 가맹점 목록 (평소 접혀 있고 눌러서 펼침)
+function ExcludeRow({ icon, label, items }: { icon: string; label: string; items: string[] }) {
+  const [open, setOpen] = useState(false)
+  if (!items.length) return null
+  return (
+    <div className="mt-1.5 text-[11px]">
+      <button onClick={() => setOpen((o) => !o)} className="text-sub flex items-center gap-1 hover:text-ink"><span className="inline-block w-2">{open ? '▾' : '▸'}</span>{icon} {label}</button>
+      {open && <div className="text-sub mt-1 leading-relaxed pl-3">{items.join(', ')}</div>}
+    </div>
+  )
+}
 
 export default function Cards() {
   const { profileId, profile } = useProfile()
   const month = thisMonth()
+  const prevMonth = addMonth(month, -1)
   const year = month.slice(0, 4)
   const cards = useLiveQuery(() => (profileId ? repo.listCards(profileId) : []), [profileId], [])
   const monthTxs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month }) : []), [profileId, month], [])
+  const prevTxs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month: prevMonth }) : []), [profileId, prevMonth], [])
   const allTxs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Card | undefined>()
 
-  const spendByCard = useMemo(() => {
-    const map: Record<string, number> = {}
-    for (const t of monthTxs) {
-      if (t.type !== 'expense' || !t.cardId) continue
-      map[t.cardId] = (map[t.cardId] ?? 0) + t.amount
-    }
-    return map
-  }, [monthTxs])
-
   return (
     <div>
-      <PageHeader title="카드혜택" desc={`${monthLabel(month)} 실적·한도 진행률 · 규칙 직접 입력`} />
+      <PageHeader title="카드혜택" />
 
       {cards.length === 0 && <Empty>오른쪽 아래 ＋ 로 카드·혜택 규칙을 등록하세요.</Empty>}
 
-      <div className="grid grid-cols-2 gap-3.5">
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {cards.map((c) => {
-          const spend = spendByCard[c.id] ?? 0
+          const spend = cardSpend(monthTxs, c) // 이번 달 누적 (다음 달 등급 대비)
+          const prevSpend = cardSpend(prevTxs, c) // 전월 실적 (이번 달 혜택 등급 결정)
           const req = c.requiredSpend ?? 0
           const reqPct = req ? Math.min(100, (spend / req) * 100) : 0
-          const metReq = req > 0 && spend >= req
-          const cardMonthTxs = monthTxs.filter((t) => t.type === 'expense' && t.cardId === c.id)
+          const activeByReq = req === 0 || prevSpend >= req // 전월 실적 충족 → 이번 달 혜택 적용
+          const cardMonthTxs = [...monthTxs].filter((t) => t.type === 'expense' && t.cardId === c.id).sort((a, b) => a.date.localeCompare(b.date))
+          const base = c.baseBenefit
+          const specials = c.benefits ?? []
+          // 거래를 '혜택제외 → 특별적립(조건 충족) → 기본적립'으로 분류 (실적 미달이면 혜택 전부 0)
+          const baseTxs: Transaction[] = []
+          const spTxs: Record<string, Transaction[]> = {}
+          if (activeByReq) {
+            for (const t of cardMonthTxs) {
+              if (isExcluded(c, t.merchant)) continue
+              const sp = specials.find((r) => ruleMatches(r, t.merchant) && pickTier(r, { amount: t.amount, prevSpend, thisSpend: spend }))
+              if (sp) (spTxs[sp.id] ??= []).push(t)
+              else if (base) baseTxs.push(t)
+            }
+          }
+          const specialUsed = specials.map((r) => ({ r, ...evalRuleMonth(r, spTxs[r.id] ?? [], prevSpend, spend) }))
+          const baseEval = base ? evalRuleMonth(base, baseTxs, prevSpend, spend) : null
+          const baseUsed = baseEval?.used ?? 0
+          // 특별적립 통합 한도 (전월실적별) — 기본적립엔 미적용
+          const specialRawTotal = specialUsed.reduce((a, x) => a + x.used, 0)
+          const spCap = activeSpecialCap(c, prevSpend)
+          const specialTotal = spCap > 0 ? Math.min(specialRawTotal, spCap) : specialRawTotal
+          const spFull = spCap > 0 && specialTotal >= spCap
+          const excl = c.excludeMerchants ?? []
           return (
             <Box key={c.id}>
               <div className="flex items-center justify-between">
@@ -51,39 +96,85 @@ export default function Cards() {
                 <button onClick={() => { setEdit(c); setModal(true) }} className="text-[12px] text-sub hover:text-ink">수정</button>
               </div>
 
+              {/* 전월 실적 → 이번 달 혜택 등급 */}
               {req > 0 && (
-                <div className="mt-3">
-                  <div className="flex justify-between text-[12.5px]"><span>월 실적</span><span className="tnum">{won(spend)} / {won(req)} {metReq && '✔'}</span></div>
-                  <div className="h-1.5 rounded-full bg-line overflow-hidden mt-1">
-                    <div className="h-full rounded-full" style={{ width: `${reqPct}%`, background: metReq ? '#12b8a6' : '#f5a524' }} />
-                  </div>
-                  {!metReq && <div className="text-[11px] text-sub mt-1">실적까지 {won(req - spend)} 남음</div>}
+                <div className={`mt-2.5 text-[11.5px] rounded-lg px-2.5 py-1.5 ${activeByReq ? 'bg-mint-l text-mint-d' : 'bg-[#fdeaea] text-expense'}`}>
+                  전월 실적 <b className="tnum">{won(prevSpend)}</b> / 조건 {won(req)}
+                  {activeByReq ? ' · 이번 달 혜택 적용 ✔' : ' · 실적 미달로 이번 달 혜택 제외'}
                 </div>
               )}
 
-              {/* 영역별 혜택 + 이번 달 소진 */}
-              <div className="mt-3 space-y-2">
-                {(c.benefits ?? []).length === 0 && <div className="text-[12px] text-sub">등록된 혜택 규칙이 없어요.</div>}
-                {(c.benefits ?? []).map((r) => {
-                  const used = cardMonthTxs.filter((t) => ruleMatches(r, t.merchant)).reduce((a, t) => a + ruleSaving(r, t.amount), 0)
-                  const cappedUsed = r.cap ? Math.min(used, r.cap) : used
-                  const full = r.cap ? cappedUsed >= r.cap : false
-                  return (
-                    <div key={r.id}>
-                      <div className="flex justify-between text-[12px]">
-                        <span className="font-semibold">{r.area} <span className="text-sub font-normal">{r.kind === 'rate' ? `${r.value}%` : `건당 ${won(r.value)}원`}</span></span>
-                        <span className="tnum text-sub">{won(cappedUsed)}{r.cap ? ` / ${won(r.cap)}` : ''}</span>
+              {/* 이번 달 실적 누적 (다음 달 등급 대비) */}
+              {req > 0 && (
+                <div className="mt-2">
+                  <div className="flex justify-between text-[12px] text-sub"><span>이번 달 실적 (다음 달 등급)</span><span className="tnum">{won(spend)} / {won(req)}</span></div>
+                  <div className="h-1.5 rounded-full bg-line overflow-hidden mt-1">
+                    <div className="h-full rounded-full" style={{ width: `${reqPct}%`, background: spend >= req ? '#12b8a6' : '#f5a524' }} />
+                  </div>
+                  {spend < req && <div className="text-[11px] text-sub mt-1">다음 달 혜택까지 {won(req - spend)} 남음</div>}
+                </div>
+              )}
+
+              {/* 기본 적립 */}
+              {base && (
+                <div className="mt-3">
+                  <div className="flex justify-between text-[12px]">
+                    <span className="font-semibold">기본 적립 <span className="text-sub font-normal">모든 가맹점</span> <span className={`font-normal ${activeByReq && baseEval?.tier ? 'text-mint-d' : 'text-expense/60 line-through'}`}>{rateLabel(base.kind, baseEval?.tier)}{ruleTiers(base).length > 1 ? ' (구간별)' : ''}</span></span>
+                    <span className="tnum text-sub">{won(baseUsed)}{baseEval?.cap != null ? ` / ${won(baseEval.cap)}` : ''}</span>
+                  </div>
+                  {baseEval?.cap != null && (
+                    <>
+                      <div className="h-1.5 rounded-full bg-line overflow-hidden mt-1">
+                        <div className="h-full rounded-full" style={{ width: `${Math.min(100, baseEval.cap ? (baseUsed / baseEval.cap) * 100 : 0)}%`, background: baseUsed >= baseEval.cap ? '#e5484d' : '#12b8a6' }} />
                       </div>
-                      {r.cap ? (
-                        <div className="h-1.5 rounded-full bg-line overflow-hidden mt-1">
-                          <div className="h-full rounded-full" style={{ width: `${Math.min(100, (cappedUsed / r.cap) * 100)}%`, background: full ? '#e5484d' : '#12b8a6' }} />
+                      <Remain cap={baseEval.cap} used={baseUsed} kind={base.kind} value={baseEval.tier?.value} />
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* 특별 적립 (영역별 한도) */}
+              {specialUsed.length > 0 && (
+                <div className="mt-2 space-y-2">
+                  <div className="text-[11px] font-semibold text-sub">특별 적립 <span className="font-normal">(해당 가맹점은 기본적립 대신 적용)</span></div>
+                  {specialUsed.map(({ r, used, cap, tier }) => {
+                    const full = cap != null ? used >= cap : false
+                    const cond = tierCond(tier)
+                    return (
+                      <div key={r.id}>
+                        <div className="flex justify-between text-[12px]">
+                          <span className="font-semibold">{r.area} <span className={`font-normal ${activeByReq && tier ? 'text-sub' : 'text-expense/60 line-through'}`}>{rateLabel(r.kind, tier)}{ruleTiers(r).length > 1 ? ' (구간별)' : ''}</span>{cond ? <span className="text-[11px] text-sub font-normal"> · {cond}</span> : null}</span>
+                          <span className="tnum text-sub">{won(used)}{cap != null ? ` / ${won(cap)}` : ''}</span>
                         </div>
-                      ) : null}
-                      {full && <div className="text-[11px] text-expense mt-0.5">한도 소진! 이 영역은 다른 카드로.</div>}
+                        {cap != null ? (
+                          <>
+                            <div className="h-1.5 rounded-full bg-line overflow-hidden mt-1">
+                              <div className="h-full rounded-full" style={{ width: `${Math.min(100, cap ? (used / cap) * 100 : 0)}%`, background: full ? '#e5484d' : '#12b8a6' }} />
+                            </div>
+                            {tier && <Remain cap={cap} used={used} kind={r.kind} value={tier.value} />}
+                          </>
+                        ) : null}
+                      </div>
+                    )
+                  })}
+                  {/* 특별적립 통합 한도 (전월실적별) */}
+                  {spCap > 0 && (
+                    <div className="pt-1">
+                      <div className="flex justify-between text-[11.5px]"><span className="text-sub">특별적립 통합</span><span className="tnum">{won(specialTotal)} / {won(spCap)}</span></div>
+                      <div className="h-1.5 rounded-full bg-line overflow-hidden mt-1">
+                        <div className="h-full rounded-full" style={{ width: `${Math.min(100, (specialTotal / spCap) * 100)}%`, background: spFull ? '#e5484d' : '#12b8a6' }} />
+                      </div>
+                      {spFull && <div className="text-[11px] text-expense mt-0.5">특별적립 통합 한도 소진!</div>}
                     </div>
-                  )
-                })}
-              </div>
+                  )}
+                </div>
+              )}
+
+              {!base && specialUsed.length === 0 && <div className="mt-3 text-[12px] text-sub">등록된 혜택이 없어요.</div>}
+
+              {/* 제외 가맹점 (접기/펼치기) */}
+              <ExcludeRow icon="🚫" label="혜택 제외" items={excl} />
+              <ExcludeRow icon="📊" label="실적 제외" items={c.excludeFromSpend ?? []} />
             </Box>
           )
         })}
@@ -161,41 +252,143 @@ function YearEndCard({
 }
 
 // ===== 카드 추가/수정 =====
-type DraftRule = { id: string; area: string; merchants: string; kind: 'rate' | 'fixed'; value: string; cap: number | null }
+type DraftTier = { minSpend: number | null; minPrev: number | null; minThisMonth: number | null; value: string; maxCount: string; cap: number | null }
+type DraftRule = { id: string; area: string; merchants: string; kind: 'rate' | 'fixed'; tiers: DraftTier[] }
+
+const newTier = (): DraftTier => ({ minSpend: null, minPrev: null, minThisMonth: null, value: '', maxCount: '', cap: null })
+const newRule = (): DraftRule => ({ id: uid(), area: '', merchants: '', kind: 'rate', tiers: [newTier()] })
+const toDraft = (r: BenefitRule): DraftRule => ({
+  id: r.id, area: r.area, merchants: r.merchants.join(', '), kind: r.kind,
+  tiers: ruleTiers(r).map((t) => ({
+    minSpend: t.minSpend ?? null, minPrev: t.minPrev ?? null, minThisMonth: t.minThisMonth ?? null,
+    value: String(t.value ?? ''), maxCount: t.maxCount ? String(t.maxCount) : '', cap: t.cap ?? null,
+  })),
+})
+// draft → BenefitRule (혜택값 있는 구간만; 하나도 없으면 null)
+function buildRule(r: DraftRule, area: string, merchants: string[]): BenefitRule | null {
+  const tiers: BenefitTier[] = r.tiers
+    .map((t) => ({
+      minSpend: t.minSpend || undefined, minPrev: t.minPrev || undefined, minThisMonth: t.minThisMonth || undefined,
+      value: Number(t.value) || 0, maxCount: Number(t.maxCount) || undefined, cap: t.cap || undefined,
+    }))
+    .filter((t) => t.value > 0)
+    .sort((a, b) => (a.minPrev ?? 0) - (b.minPrev ?? 0) || (a.minSpend ?? 0) - (b.minSpend ?? 0))
+  if (!tiers.length) return null
+  return { id: r.id, area, merchants, kind: r.kind, tiers, value: tiers[tiers.length - 1].value }
+}
+
+// 폭 충돌 없는 입력 박스(inputCls의 w-full 제외) + 세그먼트 버튼
+const boxCls = 'border border-line rounded-[10px] px-3 py-2 text-[14px] bg-surface outline-none focus:border-mint transition-colors'
+const seg = (on: boolean) => `flex-1 py-2 rounded-[9px] text-[12px] font-bold border transition-colors ${on ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`
+
+// 작은 라벨 + 금액 입력
+function Amt({ label, v, on }: { label: string; v: number | null; on: (v: number | null) => void }) {
+  return <div><div className="text-[10px] text-sub mb-0.5">{label}</div><AmountInput value={v} onChange={on} placeholder="-" /></div>
+}
+
+// 혜택 편집기 (기본적립·특별적립 공용): 비율/정액 + 조건·혜택·한도 구간표
+function EarnEditor({ d, patch, capHint }: { d: DraftRule; patch: (p: Partial<DraftRule>) => void; capHint: string }) {
+  const set = (i: number, p: Partial<DraftTier>) => patch({ tiers: d.tiers.map((t, ti) => (ti === i ? { ...t, ...p } : t)) })
+  const unit = d.kind === 'rate' ? '%' : '원'
+  return (
+    <>
+      <div className="flex gap-1.5 mb-2">
+        <button onClick={() => patch({ kind: 'rate' })} className={seg(d.kind === 'rate')}>비율 (%)</button>
+        <button onClick={() => patch({ kind: 'fixed' })} className={seg(d.kind === 'fixed')}>정액 (원/건)</button>
+      </div>
+      <div className="space-y-2">
+        {d.tiers.map((t, i) => (
+          <div key={i} className="bg-canvas rounded-[10px] p-2.5">
+            <div className="flex items-center justify-between mb-1.5">
+              <span className="text-[11px] font-bold text-sub">구간 {i + 1}</span>
+              {d.tiers.length > 1 && <button onClick={() => patch({ tiers: d.tiers.filter((_, ti) => ti !== i) })} className="text-sub hover:text-expense"><Trash2 size={13} /></button>}
+            </div>
+            {/* 혜택 */}
+            <div className="flex items-center gap-1.5 mb-2">
+              <span className="text-[11px] text-sub w-9 shrink-0 font-semibold">혜택</span>
+              <input type="number" value={t.value} onChange={(e) => set(i, { value: e.target.value })} onWheel={(e) => e.currentTarget.blur()} placeholder="0" className={boxCls + ' flex-1 min-w-0 text-right tnum'} />
+              <span className="text-[12.5px] font-semibold w-5 shrink-0">{unit}</span>
+            </div>
+            {/* 조건 */}
+            <div className="flex items-start gap-1.5 mb-2">
+              <span className="text-[11px] text-sub w-9 shrink-0 font-semibold pt-4">조건</span>
+              <div className="flex-1 grid grid-cols-3 gap-1.5 min-w-0">
+                <Amt label="건당↑" v={t.minSpend} on={(v) => set(i, { minSpend: v })} />
+                <Amt label="전월실적↑" v={t.minPrev} on={(v) => set(i, { minPrev: v })} />
+                <Amt label="당월실적↑" v={t.minThisMonth} on={(v) => set(i, { minThisMonth: v })} />
+              </div>
+            </div>
+            {/* 한도 */}
+            <div className="flex items-start gap-1.5">
+              <span className="text-[11px] text-sub w-9 shrink-0 font-semibold pt-4">한도</span>
+              <div className="flex-1 grid grid-cols-2 gap-1.5 min-w-0">
+                <div><div className="text-[10px] text-sub mb-0.5">월 횟수</div><input type="number" value={t.maxCount} onChange={(e) => set(i, { maxCount: e.target.value })} onWheel={(e) => e.currentTarget.blur()} placeholder="무제한" className={boxCls + ' w-full text-right tnum'} /></div>
+                <div><div className="text-[10px] text-sub mb-0.5">월 최대금액</div><AmountInput value={t.cap} onChange={(v) => set(i, { cap: v })} placeholder={capHint} /></div>
+              </div>
+            </div>
+          </div>
+        ))}
+        <button onClick={() => patch({ tiers: [...d.tiers, newTier()] })} className="text-[11.5px] font-bold text-mint-d flex items-center gap-1"><Plus size={12} /> 구간 추가</button>
+        {capHint !== '무제한' && <div className="text-[10.5px] text-sub">월 최대금액을 비워두면 아래 <b>특별적립 통합 한도</b>가 이 혜택들에 합쳐서 적용돼요.</div>}
+      </div>
+    </>
+  )
+}
+
+// 특별적립 통합 한도 구간 (전월실적별)
+type DraftCapTier = { minPrev: number | null; cap: number | null }
+const newCapTier = (): DraftCapTier => ({ minPrev: null, cap: null })
 
 function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Card; profileId: string }) {
   const [name, setName] = useState('')
   const [type, setType] = useState<'credit' | 'check'>('credit')
   const [req, setReq] = useState<number | null>(null)
+  const [capTiers, setCapTiers] = useState<DraftCapTier[]>([newCapTier()])
+  const [base, setBase] = useState<DraftRule>(newRule())
   const [rules, setRules] = useState<DraftRule[]>([])
+  const [exclude, setExclude] = useState('')
+  const [excludeSpend, setExcludeSpend] = useState('')
 
   useEffect(() => {
     if (!open) return
     if (edit) {
       setName(edit.name); setType(edit.type ?? 'credit'); setReq(edit.requiredSpend ?? null)
-      setRules((edit.benefits ?? []).map((r) => ({ id: r.id, area: r.area, merchants: r.merchants.join(', '), kind: r.kind, value: String(r.value), cap: r.cap ?? null })))
+      const ct = edit.specialCapTiers?.length ? edit.specialCapTiers : edit.pointCap ? [{ minPrev: undefined, cap: edit.pointCap }] : []
+      setCapTiers(ct.length ? ct.map((t) => ({ minPrev: t.minPrev ?? null, cap: t.cap })) : [newCapTier()])
+      setBase(edit.baseBenefit ? toDraft(edit.baseBenefit) : newRule())
+      setRules((edit.benefits ?? []).map(toDraft))
+      setExclude((edit.excludeMerchants ?? []).join(', '))
+      setExcludeSpend((edit.excludeFromSpend ?? []).join(', '))
     } else {
-      setName(''); setType('credit'); setReq(null)
-      setRules([{ id: uid(), area: '', merchants: '', kind: 'rate', value: '', cap: null }])
+      setName(''); setType('credit'); setReq(null); setCapTiers([newCapTier()])
+      setBase(newRule()); setRules([]); setExclude(''); setExcludeSpend('')
     }
   }, [open, edit])
 
   const setRule = (id: string, patch: Partial<DraftRule>) => setRules((p) => p.map((r) => (r.id === id ? { ...r, ...patch } : r)))
-  const addRule = () => setRules((p) => [...p, { id: uid(), area: '', merchants: '', kind: 'rate', value: '', cap: null }])
+  const addRule = () => setRules((p) => [...p, newRule()])
   const removeRule = (id: string) => setRules((p) => p.filter((r) => r.id !== id))
+  const setCap = (i: number, p: Partial<DraftCapTier>) => setCapTiers((c) => c.map((t, ti) => (ti === i ? { ...t, ...p } : t)))
+  const hasCap = capTiers.some((t) => Number(t.cap) > 0)
+  const specialCapHint = hasCap ? '통합 한도' : '무제한'
 
   async function save() {
     if (!name.trim()) return
-    const benefits: BenefitRule[] = rules
-      .filter((r) => r.area.trim() && Number(r.value) > 0)
-      .map((r) => ({
-        id: r.id, area: r.area.trim(),
-        merchants: r.merchants.split(',').map((s) => s.trim()).filter(Boolean),
-        kind: r.kind, value: Number(r.value), cap: r.cap || undefined,
-      }))
+    const baseRule = buildRule(base, '기본적립', [])
+    const benefits = rules
+      .map((r) => buildRule(r, r.area.trim(), r.merchants.split(',').map((s) => s.trim()).filter(Boolean)))
+      .filter((r): r is BenefitRule => !!r && !!r.area)
+    const specialCapTiers = capTiers
+      .filter((t) => Number(t.cap) > 0)
+      .map((t) => ({ minPrev: t.minPrev || undefined, cap: Number(t.cap) }))
+      .sort((a, b) => (a.minPrev ?? 0) - (b.minPrev ?? 0))
     const c: Card = {
       id: edit?.id ?? uid(), profileId, name: name.trim(), type,
-      requiredSpend: req || undefined, benefits, cycle: 'prev-month',
+      requiredSpend: req || undefined, specialCapTiers: specialCapTiers.length ? specialCapTiers : undefined,
+      baseBenefit: baseRule ?? undefined, benefits,
+      excludeMerchants: exclude.split(',').map((s) => s.trim()).filter(Boolean),
+      excludeFromSpend: excludeSpend.split(',').map((s) => s.trim()).filter(Boolean),
+      cycle: 'prev-month',
     }
     await repo.upsertCard(c)
     onClose()
@@ -213,36 +406,70 @@ function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose:
             ))}
           </div>
         </Field>
-        <Field label="월 실적 조건 (원)"><AmountInput value={req} onChange={setReq} /></Field>
+        <Field label="전월 실적 조건 (원)"><AmountInput value={req} onChange={setReq} placeholder="예: 300,000" /></Field>
+      </div>
+      <div className="text-[11px] text-sub -mt-2 mb-2 leading-relaxed bg-canvas rounded-lg px-2.5 py-2">💡 <b>지난달</b>에 이 금액 이상 써야 이번 달 혜택이 나와요. 조건이 없거나, 아래 <b>구간</b>에 전월실적 조건을 직접 넣는 카드면 비워두세요.</div>
+
+      <div className="text-[11px] text-sub mb-2.5 leading-relaxed bg-mint-l text-mint-d rounded-lg px-2.5 py-2">📋 각 혜택은 은행 앱의 <b>‘조건 → 혜택 → 한도’ 표</b> 그대로예요. 간단한 혜택이면 <b>혜택값만</b> 넣고 조건·한도는 비워두세요. 조건이 여러 줄(예: 1만↑ 1% / 30만↑ 2%)이면 <b>구간 추가</b>로 줄을 늘리면 돼요.</div>
+
+      {/* 기본 적립 */}
+      <div className="border border-line rounded-[12px] p-3 mb-2.5">
+        <div className="text-[13px] font-bold mb-1">기본 적립 <span className="text-[11px] text-sub font-normal">· 모든 가맹점</span></div>
+        <div className="text-[11px] text-sub mb-2">특별 적립·제외 가맹점을 뺀 <b>모든 결제</b>에 붙는 적립이에요. 예) 하나 Wide = 비율%, 구간1 전월실적↑40만·혜택2%, 구간2 혜택1%. 두 구간이 <b>합쳐서</b> 월 10만이면 각 구간 ‘월 최대금액’에 100,000을 넣으세요(월엔 한 구간만 적용돼요). (기본 적립이 없으면 비워두세요)</div>
+        <EarnEditor d={base} patch={(p) => setBase((b) => ({ ...b, ...p }))} capHint="무제한" />
       </div>
 
-      <div className="flex items-center justify-between mt-1 mb-1">
-        <span className="text-[12px] font-semibold text-sub">혜택 영역 {rules.length > 1 && <span className="text-mint-d">· {rules.length}개</span>}</span>
-        <button onClick={addRule} className="text-[12px] font-bold text-mint-d flex items-center gap-1"><Plus size={13} /> 영역 추가</button>
+      {/* 특별 적립 */}
+      <div className="flex items-center justify-between mt-1 mb-2">
+        <div>
+          <span className="text-[13px] font-bold">특별 적립 {rules.length > 0 && <span className="text-mint-d">{rules.length}개</span>}</span>
+          <div className="text-[11px] text-sub">특정 가맹점에 더 주는 혜택. 그 가맹점은 기본적립 대신 이게 적용돼요.</div>
+        </div>
+        <button onClick={addRule} className="text-[12px] font-bold text-mint-d flex items-center gap-1 shrink-0"><Plus size={13} /> 영역 추가</button>
       </div>
 
-      {rules.map((r) => (
-        <div key={r.id} className="border border-line rounded-[10px] p-2.5 mb-2 space-y-2">
-          <div className="flex gap-2">
-            <input value={r.area} onChange={(e) => setRule(r.id, { area: e.target.value })} placeholder="영역명 (예: 편의점)" className={inputCls + ' flex-1 min-w-0'} />
-            {rules.length > 1 && <button onClick={() => removeRule(r.id)} className="text-sub hover:text-expense px-0.5"><Trash2 size={16} /></button>}
+      {rules.map((r, idx) => (
+        <div key={r.id} className="border border-line rounded-[12px] p-3 mb-2.5">
+          <div className="flex items-center gap-2 mb-2">
+            <span className="text-[11px] font-bold text-mint-d bg-mint-l rounded-full px-2 py-0.5 shrink-0">특별 {idx + 1}</span>
+            <input value={r.area} onChange={(e) => setRule(r.id, { area: e.target.value })} placeholder="이름 (예: 편의점)" className={boxCls + ' flex-1 min-w-0'} />
+            <button onClick={() => removeRule(r.id)} className="text-sub hover:text-expense px-0.5 shrink-0"><Trash2 size={16} /></button>
           </div>
-          <input value={r.merchants} onChange={(e) => setRule(r.id, { merchants: e.target.value })} placeholder="가맹점 키워드 쉼표로 (예: GS25, CU, 세븐일레븐)" className={inputCls} />
-          <div className="flex gap-2">
-            <select value={r.kind} onChange={(e) => setRule(r.id, { kind: e.target.value as 'rate' | 'fixed' })} className={inputCls + ' w-[92px]'}>
-              <option value="rate">정률 %</option>
-              <option value="fixed">정액 원</option>
-            </select>
-            <input type="number" value={r.value} onChange={(e) => setRule(r.id, { value: e.target.value })} placeholder={r.kind === 'rate' ? '할인율' : '건당 금액'} className={inputCls + ' flex-1 text-right tnum'} />
-            <div className="w-[120px]"><AmountInput value={r.cap} onChange={(v) => setRule(r.id, { cap: v })} placeholder="월 한도(선택)" /></div>
+          <div className="mb-2.5">
+            <div className="text-[11.5px] text-sub mb-1">어떤 가맹점에서? <span className="text-sub/70">(쉼표로 구분 · 빼려면 !쿠팡이츠 처럼 앞에 !)</span></div>
+            <input value={r.merchants} onChange={(e) => setRule(r.id, { merchants: e.target.value })} placeholder="예: 쿠팡, G마켓, !쿠팡이츠" className={boxCls + ' w-full'} />
           </div>
+          <EarnEditor d={r} patch={(p) => setRule(r.id, p)} capHint={specialCapHint} />
         </div>
       ))}
+
+      {/* 특별적립 통합 한도 (전월실적별) */}
+      <div className="border border-line rounded-[12px] p-3 mb-2.5">
+        <div className="text-[13px] font-bold mb-1">특별적립 통합 한도 <span className="text-[11px] text-sub font-normal">· 선택</span></div>
+        <div className="text-[11px] text-sub mb-2">여러 <b>특별 적립</b>을 합쳐서 받는 월 상한이에요. 전월 실적에 따라 한도가 다르면 구간을 나눠 넣으세요. (기본 적립엔 적용 안 됨 · 없으면 비워두기)<br />예) BC 바로카드 = 전월 30만↑ 1만 / 70·100만↑ 2만 / 200만↑ 3만</div>
+        <div className="space-y-1.5">
+          {capTiers.map((t, i) => (
+            <div key={i} className="flex items-center gap-1.5">
+              <span className="text-[12px] text-sub shrink-0">전월실적</span>
+              <div className="flex-1 min-w-0"><AmountInput value={t.minPrev} onChange={(v) => setCap(i, { minPrev: v })} placeholder="0 (조건없음)" /></div>
+              <span className="text-[12px] text-sub shrink-0">이상 →</span>
+              <div className="w-[110px]"><AmountInput value={t.cap} onChange={(v) => setCap(i, { cap: v })} placeholder="한도" /></div>
+              {capTiers.length > 1 && <button onClick={() => setCapTiers((c) => c.filter((_, ci) => ci !== i))} className="text-sub hover:text-expense shrink-0"><Trash2 size={13} /></button>}
+            </div>
+          ))}
+          <button onClick={() => setCapTiers((c) => [...c, newCapTier()])} className="text-[11.5px] font-bold text-mint-d flex items-center gap-1"><Plus size={12} /> 구간 추가</button>
+        </div>
+      </div>
+
+      {/* 혜택 제외 / 실적 제외 */}
+      <Field label="혜택 제외 가맹점 (선택)"><input value={exclude} onChange={(e) => setExclude(e.target.value)} placeholder="예: 상품권, 대학등록금 (쉼표로 구분)" className={inputCls} /></Field>
+      <div className="text-[11px] text-sub -mt-2 mb-2 leading-relaxed">적립·할인이 전혀 안 되고, 실적에도 안 잡혀요.</div>
+      <Field label="실적 제외 가맹점 (선택)"><input value={excludeSpend} onChange={(e) => setExcludeSpend(e.target.value)} placeholder="예: 아파트관리비, 공과금 (쉼표로 구분)" className={inputCls} /></Field>
+      <div className="text-[11px] text-sub -mt-2 mb-2 leading-relaxed">혜택(적립·할인)은 <b>받지만</b> 실적에는 안 잡히는 가맹점이에요. (예: 바로카드 아파트 관리비)</div>
 
       <div className="flex gap-2 mt-4">
         {edit && <Button variant="ghost" className="!text-expense" onClick={async () => { await repo.deleteCard(edit.id); onClose() }}>삭제</Button>}
         <div className="flex-1" />
-        <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>
       </div>
     </Modal>

@@ -7,9 +7,9 @@ import { useLiveQuery } from 'dexie-react-hooks'
 import { Plus, Trash2 } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
-import { todayISO, won } from '../lib/format'
+import { todayISO, won, addMonth } from '../lib/format'
 import { EXPENSE_CATS, INCOME_CATS } from '../lib/categories'
-import { ruleMatches, ruleSaving } from '../lib/cardAdvisor'
+import { ruleMatches, pickTier, tierSaving, isExcluded, isSpendExcluded } from '../lib/cardAdvisor'
 import type { Split, Transaction, TxType } from '../db/types'
 import { Modal, Field, inputCls, Button } from './ui'
 import { useToast } from './Toast'
@@ -123,7 +123,7 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       merchant: merchant.trim(),
       amount: finalSplits.reduce((a, s) => a + s.amount, 0),
       cardId: type === 'expense' && cardId ? cardId : null,
-      method: type === 'expense' ? card?.name : undefined,
+      method: type === 'expense' ? (card?.name ?? '현금/기타') : undefined,
       memo: memo.trim() || undefined,
       betterCardNote: edit?.betterCardNote,
       splits: finalSplits,
@@ -139,7 +139,13 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
     if (t.type !== 'expense' || !t.cardId) return
     const card = cards.find((c) => c.id === t.cardId)
     if (!card) return
-    const monthTxs = await repo.listTransactions(profileId, { month: t.date.slice(0, 7) })
+    const ym = t.date.slice(0, 7)
+    const monthTxs = await repo.listTransactions(profileId, { month: ym })
+    const prevTxs = await repo.listTransactions(profileId, { month: addMonth(ym, -1) })
+    const spendOf = (txs: Transaction[]) =>
+      txs.filter((x) => x.type === 'expense' && x.cardId === card.id && !isExcluded(card, x.merchant) && !isSpendExcluded(card, x.merchant)).reduce((a, x) => a + x.amount, 0)
+    const thisSpend = spendOf(monthTxs)
+    const prevSpend = spendOf(prevTxs)
     const cardTxs = monthTxs.filter((x) => x.type === 'expense' && x.cardId === card.id)
     const after = cardTxs.reduce((a, x) => a + x.amount, 0)
     const before = after - t.amount
@@ -147,11 +153,16 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       toast(`🎉 ${card.name} 실적 달성!`)
     }
     for (const r of card.benefits ?? []) {
-      if (!r.cap) continue
-      const matched = cardTxs.filter((x) => ruleMatches(r, x.merchant))
-      const usedAfter = matched.reduce((a, x) => a + ruleSaving(r, x.amount), 0)
-      const usedBefore = matched.filter((x) => x.id !== t.id).reduce((a, x) => a + ruleSaving(r, x.amount), 0)
-      if (usedBefore < r.cap && usedAfter >= r.cap) toast(`💳 ${card.name} ${r.area} 혜택 한도 달성`)
+      const cap = pickTier(r, { amount: Infinity, prevSpend, thisSpend })?.cap
+      if (!cap) continue
+      const usedOf = (txs: Transaction[]) =>
+        txs.filter((x) => ruleMatches(r, x.merchant)).reduce((a, x) => {
+          const tier = pickTier(r, { amount: x.amount, prevSpend, thisSpend })
+          return a + (tier ? tierSaving(r.kind, tier.value, x.amount) : 0)
+        }, 0)
+      const usedAfter = Math.min(cap, usedOf(cardTxs))
+      const usedBefore = Math.min(cap, usedOf(cardTxs.filter((x) => x.id !== t.id)))
+      if (usedBefore < cap && usedAfter >= cap) toast(`💳 ${card.name} ${r.area} 혜택 한도 달성`)
     }
   }
 
@@ -278,7 +289,6 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
           <Button variant="ghost" className="!text-expense" onClick={async () => { await repo.deleteTransaction(edit.id); onClose() }}>삭제</Button>
         )}
         <div className="flex-1" />
-        <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>
       </div>
     </Modal>

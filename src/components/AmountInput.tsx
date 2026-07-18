@@ -54,13 +54,13 @@ export default function AmountInput({
           setText(raw)
           onChange(evalAmount(raw))
         } else {
-          // 일반 숫자 — 실시간 콤마
-          const digits = raw.replace(/[^\d]/g, '')
-          if (digits === '') {
+          // 일반 숫자 — 실시간 콤마. 엑셀 등에서 붙여넣은 소수점(1,000.00)은 반올림 정수로
+          const cleaned = raw.replace(/,/g, '').replace(/[^\d.]/g, '')
+          if (cleaned === '' || cleaned === '.') {
             setText('')
             onChange(null)
           } else {
-            const n = Number(digits)
+            const n = Math.round(Number(cleaned) || 0)
             setText(withComma(n))
             onChange(n)
           }

@@ -14,6 +14,8 @@
 
   --color-expense: #e5484d; /* 지출 = 빨강 */
   --color-income: #2f6fed; /* 수입 = 파랑 */
+  --color-up: #e5484d; /* 투자 상승/수익 = 빨강 (국내 증시 관례) */
+  --color-down: #2f6fed; /* 투자 하락/손실 = 파랑 */
   --color-warn: #f5a524;
 
   --font-sans:
@@ -43,6 +45,16 @@ body {
 .tnum {
   font-variant-numeric: tabular-nums;
   font-feature-settings: 'tnum';
+}
+
+/* 셀렉트 박스: 기본 화살표 대신 여백 있는 커스텀 화살표 */
+select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%235b6673' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'><polyline points='6 9 12 15 18 9'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  padding-right: 34px !important;
 }
 
 /* 얇은 스크롤바 */

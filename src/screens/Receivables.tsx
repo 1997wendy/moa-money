@@ -78,7 +78,7 @@ export default function Receivables() {
 
   return (
     <div>
-      <PageHeader title="정산" desc="사람별·월별 받을 돈·줄 돈" right={
+      <PageHeader title="정산" right={
         <button onClick={() => { setEditPerson(undefined); setPersonModal(true) }} className="text-[13px] font-bold text-white bg-mint rounded-[10px] px-3 py-2 hover:bg-mint-d flex items-center gap-1"><Plus size={15} />상대 추가</button>
       } />
 
@@ -200,7 +200,6 @@ function PersonModal({ open, onClose, edit, profileId }: { open: boolean; onClos
     <Modal open={open} onClose={onClose} title={edit ? '정산 상대 수정' : '정산 상대 추가'}>
       <Field label="이름"><input value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && save()} placeholder="예: 아빠 / 엄마 / 동생 이름" className={inputCls} autoFocus /></Field>
       <div className="flex gap-2 mt-4 justify-end">
-        <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>
       </div>
     </Modal>
@@ -234,7 +233,6 @@ function RecurModal({ open, onClose, personId, profileId }: { open: boolean; onC
         </div>
       </Field>
       <div className="flex gap-2 mt-4 justify-end">
-        <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>
       </div>
     </Modal>

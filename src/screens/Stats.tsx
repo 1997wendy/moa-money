@@ -1,13 +1,17 @@
 import { useEffect, useMemo, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { ChevronLeft, ChevronRight } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Pencil, Trash2 } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, compact, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
 import { krwValue } from '../lib/assets'
+import { EXPENSE_CATS } from '../lib/categories'
 import { detectFixed } from '../lib/fixedCost'
+
+const CAT_COLORS = ['#12b8a6', '#5b8def', '#f5a524', '#9b8afb', '#e5484d', '#3fc7b8', '#ec6ea6', '#6bbd6e', '#8b96a3', '#c58af9']
+const catColor = (cat: string) => { const i = EXPENSE_CATS.indexOf(cat); return CAT_COLORS[(i < 0 ? EXPENSE_CATS.length : i) % CAT_COLORS.length] }
 import type { Goal, Transaction } from '../db/types'
 
 /** 그 달의 순수익(수입 - 내 부담 지출) */
@@ -22,28 +26,17 @@ function monthNet(txs: Transaction[], ym: string) {
 }
 
 export default function Stats() {
-  const { profileId } = useProfile()
+  const { profileId, profile } = useProfile()
   const [month, setMonth] = useState(thisMonth())
   const [tab, setTab] = useState<'now' | 'trend' | 'goal'>('now')
   const [modal, setModal] = useState(false)
+  const [editGoal, setEditGoal] = useState<Goal | undefined>()
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
-  const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
+  const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId]) // undefined = 로딩중
   const goals = useLiveQuery(() => (profileId ? repo.listGoals(profileId) : []), [profileId], [])
 
-  const totalAssets = assets.reduce((s, a) => s + krwValue(a), 0)
+  const totalAssets = (assets ?? []).reduce((s, a) => s + krwValue(a), 0)
   const now = thisMonth()
-
-  // 순자산 시계열(추정): 현재 총자산에서 이후 순수익을 역산해 과거 순자산 복원 (현금흐름 기준)
-  const nw = useMemo(() => {
-    const map: Record<string, number> = { [now]: totalAssets }
-    let cur = now
-    for (let i = 0; i < 24; i++) {
-      const prev = addMonth(cur, -1)
-      map[prev] = map[cur] - monthNet(txs, cur).net
-      cur = prev
-    }
-    return map
-  }, [txs, totalAssets, now])
 
   const activeGoal = useMemo(
     () =>
@@ -57,26 +50,57 @@ export default function Stats() {
     [goals, month],
   )
 
-  // 최근 6개월
-  const months6 = Array.from({ length: 6 }, (_, i) => addMonth(now, -(5 - i)))
-  const series = months6.map((ym) => {
-    const n = monthNet(txs, ym)
-    const prevNw = nw[addMonth(ym, -1)] ?? 0
-    const pct = prevNw > 0 ? (n.net / prevNw) * 100 : 0
-    return { ym, ...n, nw: nw[ym] ?? 0, pct }
-  })
-  const maxNw = Math.max(1, ...series.map((s) => s.nw))
+  // 실제 순자산 추이 — 대시보드와 동일(월별 스냅샷). 이번 달은 현재 총자산
+  const history = profile?.netWorthHistory ?? {}
+  const merged: Record<string, number> = { ...history }
+  if (assets !== undefined) merged[now] = totalAssets // 로드되면 이번 달은 실시간 값(0 포함)
+  const trendMonths = Object.keys(merged).filter((m) => m <= now).sort().slice(-6)
+  const trend = trendMonths.map((ym) => ({ ym, nw: merged[ym] ?? 0 }))
+  const nwVals = trend.map((t) => t.nw)
+  const nwLo = nwVals.length ? Math.min(...nwVals) : 0
+  const nwHi = nwVals.length ? Math.max(...nwVals) : 0
+  const chartX = (i: number) => (trend.length <= 1 ? 50 : 6 + (i / (trend.length - 1)) * 88)
+  const chartY = (v: number) => (nwHi === nwLo ? 41 : 12 + (1 - (v - nwLo) / (nwHi - nwLo)) * 58)
+  const linePts = trend.map((t, i) => `${chartX(i)},${chartY(t.nw)}`).join(' ')
+  const trendPct = trend.length >= 2 && trend[0].nw > 0 ? ((trend[trend.length - 1].nw - trend[0].nw) / trend[0].nw) * 100 : 0
 
-  // 선택월 지표
+  // 이번 달 지표 (실제 가계부 기준)
   const selNet = monthNet(txs, month)
-  const selPrevNw = nw[addMonth(month, -1)] ?? 0
-  const selPct = selPrevNw > 0 ? (selNet.net / selPrevNw) * 100 : 0
   const selSaveRate = selNet.income > 0 ? (selNet.net / selNet.income) * 100 : 0
 
-  // 연간(YoY)
-  const yoyBase = nw[addMonth(now, -12)] ?? 0
-  const yoyAmt = totalAssets - yoyBase
-  const yoyPct = yoyBase > 0 ? (yoyAmt / yoyBase) * 100 : 0
+  // 이번 달 카테고리별 지출(내 부담) — 많은 순
+  const catSpend = useMemo(() => {
+    const map: Record<string, number> = {}
+    for (const t of txs) {
+      if (t.type !== 'expense' || !t.date.startsWith(month)) continue
+      for (const s of t.splits) if (!s.owedBy) map[s.category] = (map[s.category] ?? 0) + s.amount
+    }
+    return Object.entries(map).map(([cat, amt]) => ({ cat, amt })).sort((a, b) => b.amt - a.amt)
+  }, [txs, month])
+  const catTotal = catSpend.reduce((s, c) => s + c.amt, 0)
+
+  // 월별 카테고리 지출 추이 (데이터 있는 달만 표로)
+  const catTrend = useMemo(() => {
+    const ms = Array.from({ length: 12 }, (_, i) => addMonth(now, -(11 - i)))
+    const totalByCat: Record<string, number> = {}
+    const cols = ms.map((ym) => {
+      const map: Record<string, number> = {}
+      for (const t of txs) {
+        if (t.type !== 'expense' || !t.date.startsWith(ym)) continue
+        for (const s of t.splits) if (!s.owedBy) { map[s.category] = (map[s.category] ?? 0) + s.amount; totalByCat[s.category] = (totalByCat[s.category] ?? 0) + s.amount }
+      }
+      return { ym, total: Object.values(map).reduce((a, b) => a + b, 0), map }
+    }).filter((c) => c.total > 0).slice(-4) // 데이터 있는 달만, 최근 4개까지
+    const cats = Object.entries(totalByCat).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([c]) => c)
+    return { cols, cats, has: cats.length > 0 }
+  }, [txs, now])
+
+  // 월 평균 — '보고 있는 달 이전의 거래 있는 달'만 평균. 진행 중인 선택월은 제외.
+  //   → 과거 달을 봐도 그 시점 기준으로 고정됨. 달이 쌓일수록 그만큼만 평균에 반영.
+  const dataMonths = Array.from(new Set(txs.map((t) => t.date.slice(0, 7)))).filter((m) => m < month).sort()
+  const avgMonths = dataMonths.length
+  const avgOf = (key: 'net' | 'income') => (avgMonths > 0 ? dataMonths.reduce((s, m) => s + monthNet(txs, m)[key], 0) / avgMonths : 0)
+  const avgNet = avgOf('net')
 
   // 연도별 순수익 비교 (있는 데이터 기준)
   const years = useMemo(() => {
@@ -89,23 +113,25 @@ export default function Stats() {
     })
   }, [txs])
 
-  // 목표 예측 (선택월 기준 활성 목표)
-  const avgNet = series.reduce((s, m) => s + m.net, 0) / (series.length || 1)
+  // 목표 예측 (활성 목표)
   const remain = activeGoal ? activeGoal.targetAmount - totalAssets : 0
   const monthsToGoal = activeGoal && avgNet > 0 ? Math.ceil(remain / avgNet) : null
-  const eta = monthsToGoal ? (() => { const d = new Date(); d.setMonth(d.getMonth() + monthsToGoal); return `${d.getFullYear()}년 ${d.getMonth() + 1}월` })() : null
+  const etaFar = monthsToGoal != null && monthsToGoal > 1200 // 100년 초과 → 예측 무의미
+  const eta = monthsToGoal != null && !etaFar
+    ? (() => { const d = new Date(); d.setMonth(d.getMonth() + monthsToGoal); return `${d.getFullYear()}년 ${d.getMonth() + 1}월` })()
+    : null
 
   // 필요 저축률 역산 (목표 시점 있을 때)
-  const need = useMemo(() => {
+  const need = (() => {
     if (!activeGoal?.targetDate) return null
     const [ty, tm] = activeGoal.targetDate.split('-').map(Number)
-    const monthsLeft = (ty * 12 + (tm - 1)) - (Number(now.slice(0, 4)) * 12 + (Number(now.slice(5)) - 1))
+    const monthsLeft = (ty * 12 + (tm - 1)) - (Number(month.slice(0, 4)) * 12 + (Number(month.slice(5)) - 1))
     if (monthsLeft <= 0) return null
     const needMonthly = Math.max(0, remain) / monthsLeft
-    const avgIncome = series.reduce((s, m) => s + m.income, 0) / (series.length || 1)
-    const rate = avgIncome > 0 ? (needMonthly / avgIncome) * 100 : null
+    const avgInc = avgOf('income')
+    const rate = avgInc > 0 ? (needMonthly / avgInc) * 100 : null
     return { monthsLeft, needMonthly, rate }
-  }, [activeGoal, remain, series, now])
+  })()
 
   const fixed = useMemo(() => detectFixed(txs), [txs])
   const fixedTotal = fixed.reduce((s, f) => s + f.monthly, 0)
@@ -120,7 +146,7 @@ export default function Stats() {
 
   return (
     <div>
-      <PageHeader title="통계·목표" desc="자산 흐름·증감률·목표 도달 예측" />
+      <PageHeader title="통계·목표" />
 
       {/* 월 이동 */}
       <div className="flex items-center gap-2 mb-4">
@@ -141,28 +167,21 @@ export default function Stats() {
         <MonthMemo profileId={profileId} month={month} />
       </Card>
 
-      {/* 핵심 지표 */}
-      <div className="grid grid-cols-3 gap-2 md:gap-3.5">
+      {/* 핵심 지표 (실제 가계부 기준) */}
+      <div className="grid grid-cols-2 gap-2 md:gap-3.5">
         <Card>
-          <CardLabel>{monthLabel(month)} 자산 증감(추정)</CardLabel>
-          <div className={`text-[16px] md:text-[20px] font-extrabold tnum ${selNet.net >= 0 ? 'text-mint-d' : 'text-expense'}`}>{selNet.net >= 0 ? '+' : ''}{selPct.toFixed(1)}%</div>
-          <div className="text-[12px] text-sub tnum">{signed(selNet.net)}</div>
-        </Card>
-        <Card>
-          <CardLabel>연간(YoY) 증감</CardLabel>
-          <div className={`text-[16px] md:text-[20px] font-extrabold tnum ${yoyAmt >= 0 ? 'text-mint-d' : 'text-expense'}`}>{yoyAmt >= 0 ? '+' : ''}{yoyPct.toFixed(1)}%</div>
-          <div className="text-[12px] text-sub tnum">{signed(yoyAmt)}</div>
+          <CardLabel>{monthLabel(month)} 순수익</CardLabel>
+          <div className={`text-[18px] md:text-[22px] font-extrabold tnum ${selNet.net >= 0 ? 'text-mint-d' : 'text-expense'}`}>{signed(selNet.net)}</div>
         </Card>
         <Card>
           <CardLabel>{monthLabel(month)} 저축률</CardLabel>
-          <div className="text-[16px] md:text-[20px] font-extrabold tnum">{selSaveRate.toFixed(0)}%</div>
-          <div className="text-[12px] text-sub">수입 대비 저축 비율</div>
+          <div className="text-[18px] md:text-[22px] font-extrabold tnum">{selSaveRate.toFixed(0)}%</div>
         </Card>
       </div>
 
       {/* 이번달 / 지난달 / 작년 같은 달 비교 */}
       <Card className="mt-3.5">
-        <CardLabel>기간 비교 (이번 달 · 지난 달 · 작년 같은 달)</CardLabel>
+        <CardLabel>기간 비교</CardLabel>
         <table className="w-full text-[12.5px] mt-1">
           <thead><tr className="text-sub text-left border-b border-line">
             <th className="py-1.5">구분</th>
@@ -188,25 +207,57 @@ export default function Stats() {
           </tbody>
         </table>
       </Card>
+
+      {/* 카테고리별 지출 */}
+      <Card className="mt-3.5">
+        <CardLabel>{monthLabel(month)} 카테고리별 지출{catTotal > 0 ? ` · ₩${won(catTotal)}` : ''}</CardLabel>
+        {catSpend.length === 0 ? (
+          <Empty>이번 달 지출 내역이 없어요.</Empty>
+        ) : (
+          catSpend.map((c) => {
+            const pct = catTotal > 0 ? (c.amt / catTotal) * 100 : 0
+            return (
+              <div key={c.cat} className="py-1.5">
+                <div className="flex items-baseline justify-between text-[13px] mb-1">
+                  <span className="font-semibold">{c.cat}</span>
+                  <span className="tnum text-sub">₩{won(c.amt)} <span className="text-[11px]">· {pct.toFixed(0)}%</span></span>
+                </div>
+                <div className="h-1.5 rounded-full bg-line overflow-hidden"><div className="h-full bg-mint rounded-full" style={{ width: `${pct}%` }} /></div>
+              </div>
+            )
+          })
+        )}
+      </Card>
       </>)}
 
       {tab === 'goal' && (
       <Card className="mt-3.5">
-        <CardLabel>목표 {activeGoal ? `· ${activeGoal.label ?? compact(activeGoal.targetAmount)}` : ''}</CardLabel>
+        <div className="flex items-center justify-between">
+          <CardLabel>목표 {activeGoal ? `· ${activeGoal.label ?? compact(activeGoal.targetAmount)}` : ''}</CardLabel>
+          {activeGoal && (
+            <div className="flex items-center gap-1.5">
+              <button onClick={() => { setEditGoal(activeGoal); setModal(true) }} className="text-sub hover:text-ink p-1" title="목표 수정"><Pencil size={14} /></button>
+              <button onClick={async () => {
+                if (!confirm(`${monthLabel(month)}부터의 목표를 삭제할까요? (이전 달 목표는 유지)`)) return
+                for (const g of goals.filter((x) => x.id === activeGoal.id || x.effectiveFrom > month)) await repo.deleteGoal(g.id)
+              }} className="text-sub hover:text-expense p-1" title="목표 삭제"><Trash2 size={14} /></button>
+            </div>
+          )}
+        </div>
         {activeGoal ? (
           <div className="grid grid-cols-2 gap-4 items-center">
             <div>
-              <div className="text-[22px] font-extrabold">{Math.min(100, Math.round((totalAssets / activeGoal.targetAmount) * 100))}% 달성</div>
+              <div className="text-[22px] font-extrabold">{Math.min(100, Math.floor((totalAssets / activeGoal.targetAmount) * 100))}% 달성</div>
               <div className="h-2 rounded-full bg-line overflow-hidden my-2">
                 <div className="h-full bg-mint rounded-full" style={{ width: `${Math.min(100, (totalAssets / activeGoal.targetAmount) * 100)}%` }} />
               </div>
               <div className="text-[12px] text-sub">현재 ₩{won(totalAssets)} / 목표 ₩{won(activeGoal.targetAmount)}</div>
             </div>
             <div className="text-[13px]">
-              <div className="text-sub">월 평균 순수익</div>
-              <div className="font-bold tnum mb-2">{signed(Math.round(avgNet))}</div>
+              <div className="text-sub">월 평균 순수익 <span className="text-[10px]">{avgMonths > 0 ? `(${avgMonths}개월 평균)` : '(데이터 부족)'}</span></div>
+              <div className="font-bold tnum mb-2">{avgMonths > 0 ? signed(Math.round(avgNet)) : '—'}</div>
               <div className="text-sub">도달 예상</div>
-              <div className="font-bold">{eta ?? '— (순수익 필요)'}</div>
+              <div className="font-bold">{eta ?? (etaFar ? '목표가 커서 예측 어려움' : avgMonths === 0 ? '완료된 달 데이터 필요' : avgNet <= 0 ? '순수익이 있어야 예측 가능' : '—')}</div>
             </div>
           </div>
         ) : (
@@ -214,7 +265,8 @@ export default function Stats() {
         )}
         {need && (
           <div className="mt-3 text-[12px] bg-mint-l text-mint-d rounded-lg px-3 py-2 border border-dashed border-mint">
-            🎯 목표 시점({activeGoal?.targetDate})까지 {need.monthsLeft}개월 · 매월 <b>₩{won(Math.round(need.needMonthly))}</b>{need.rate != null && <> 저축 필요 (저축률 <b>{need.rate.toFixed(0)}%</b>)</>}
+            🎯 목표 시점({activeGoal?.targetDate})까지 {need.monthsLeft}개월 · 매월 <b>₩{won(Math.round(need.needMonthly))}</b> 저축 필요
+            {need.rate != null && (need.rate > 500 ? <span className="text-expense"> — 지금 소득 대비 목표가 너무 큽니다</span> : <> (저축률 <b>{need.rate.toFixed(0)}%</b>)</>)}
           </div>
         )}
       </Card>
@@ -222,18 +274,26 @@ export default function Stats() {
 
       {tab === 'trend' && (<>
       <Card className="mt-3.5">
-        <CardLabel>순자산 추이(추정) · 최근 6개월</CardLabel>
-        <div className="flex items-end gap-3 h-[150px] pt-4">
-          {series.map((s) => (
-            <div key={s.ym} className="flex-1 flex flex-col items-center justify-end h-full">
-              <div className={`text-[10px] font-bold tnum mb-1 ${s.pct >= 0 ? 'text-mint-d' : 'text-expense'}`}>{s.pct >= 0 ? '+' : ''}{s.pct.toFixed(1)}%</div>
-              <div className="w-full rounded-t-md bg-mint" style={{ height: `${(s.nw / maxNw) * 100}%`, minHeight: 4 }} />
-              <div className="text-[10.5px] text-sub mt-1">{Number(s.ym.split('-')[1])}월</div>
-              <div className="text-[9.5px] text-sub tnum">{compact(s.nw)}</div>
+        <div className="flex items-center justify-between">
+          <CardLabel>순자산 추이</CardLabel>
+          {trend.length >= 2 && <span className={`text-[12px] font-bold tnum ${trendPct >= 0 ? 'text-mint-d' : 'text-expense'}`}>{trendPct >= 0 ? '+' : ''}{trendPct.toFixed(1)}%</span>}
+        </div>
+        <div className="relative mt-3" style={{ height: 110 }}>
+          {trend.length >= 2 && (
+            <svg width="100%" height="110" viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 pointer-events-none">
+              <polyline points={linePts} fill="none" stroke="#12b8a6" strokeWidth={2.5} strokeLinejoin="round" strokeLinecap="round" vectorEffect="non-scaling-stroke" />
+            </svg>
+          )}
+          {trend.map((t, i) => (
+            <div key={t.ym} className="absolute -translate-x-1/2 -translate-y-1/2 w-2.5 h-2.5 rounded-full bg-mint border-2 border-surface" style={{ left: `${chartX(i)}%`, top: `${chartY(t.nw)}%` }} title={won(t.nw)} />
+          ))}
+          {trend.map((t, i) => (
+            <div key={t.ym} className="absolute -translate-x-1/2 text-center whitespace-nowrap" style={{ left: `${chartX(i)}%`, top: 84 }}>
+              <div className="text-[10px] text-sub">{Number(t.ym.split('-')[1])}월</div>
+              <div className="text-[9.5px] text-sub tnum">{compact(t.nw)}</div>
             </div>
           ))}
         </div>
-        <div className="text-[11px] text-sub mt-1">※ 시세 변동 제외, 현금흐름(수입−지출) 기준 추정. 정확한 값은 자산 실시간 시세 연동 후.</div>
       </Card>
 
       {/* 연도 비교 */}
@@ -254,9 +314,43 @@ export default function Stats() {
         </Card>
       )}
 
+      {/* 월별 카테고리 지출 추이 (표) */}
+      <Card className="mt-3.5">
+        <CardLabel>월별 카테고리 지출</CardLabel>
+        {!catTrend.has ? (
+          <Empty>지출 데이터가 쌓이면 카테고리별 월 추이를 보여드려요.</Empty>
+        ) : (
+          <div className="overflow-x-auto -mx-1">
+            <table className="w-full text-[12.5px] mt-1">
+              <thead>
+                <tr className="text-sub border-b border-line">
+                  <th className="text-left py-1.5 px-1 font-semibold">카테고리</th>
+                  {catTrend.cols.map((c) => <th key={c.ym} className="text-right px-1 whitespace-nowrap">{Number(c.ym.split('-')[1])}월</th>)}
+                </tr>
+              </thead>
+              <tbody>
+                {catTrend.cats.map((cat) => (
+                  <tr key={cat} className="border-b border-line last:border-0">
+                    <td className="py-2 px-1 font-semibold whitespace-nowrap"><span className="inline-block w-2 h-2 rounded-sm mr-1.5 align-middle" style={{ background: catColor(cat) }} />{cat}</td>
+                    {catTrend.cols.map((c) => {
+                      const v = c.map[cat] ?? 0
+                      return <td key={c.ym} className={`text-right px-1 tnum ${v ? '' : 'text-sub'}`}>{v ? compact(v) : '·'}</td>
+                    })}
+                  </tr>
+                ))}
+                <tr className="border-t-2 border-line font-bold">
+                  <td className="py-2 px-1">합계</td>
+                  {catTrend.cols.map((c) => <td key={c.ym} className="text-right px-1 tnum">{compact(c.total)}</td>)}
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
+      </Card>
+
       {/* 고정지출·구독 자동 인식 */}
       <Card className="mt-3.5">
-        <CardLabel>🔁 고정지출·구독 (자동 인식){fixed.length > 0 ? ` · 월 ₩${won(fixedTotal)}` : ''}</CardLabel>
+        <CardLabel>🔁 고정지출·구독{fixed.length > 0 ? ` · 월 ₩${won(fixedTotal)}` : ''}</CardLabel>
         {fixed.length === 0 ? (
           <Empty>매달 반복되는 결제가 아직 안 보여요. (2개월 이상 쌓이면 자동 인식)</Empty>
         ) : (
@@ -274,31 +368,38 @@ export default function Stats() {
       </Card>
       </>)}
 
-      {tab === 'goal' && <Fab onClick={() => setModal(true)} label="목표 추가" />}
-      <GoalModal open={modal} onClose={() => setModal(false)} profileId={profileId} defaultFrom={month} />
+      {tab === 'goal' && <Fab onClick={() => { setEditGoal(undefined); setModal(true) }} label="목표 추가" />}
+      <GoalModal open={modal} onClose={() => setModal(false)} profileId={profileId} defaultFrom={month} edit={editGoal} />
     </div>
   )
 }
 
-function GoalModal({ open, onClose, profileId, defaultFrom }: { open: boolean; onClose: () => void; profileId: string; defaultFrom: string }) {
+function GoalModal({ open, onClose, profileId, defaultFrom, edit }: { open: boolean; onClose: () => void; profileId: string; defaultFrom: string; edit?: Goal }) {
   const [amount, setAmount] = useState<number | null>(null)
   const [from, setFrom] = useState(defaultFrom)
   const [targetDate, setTargetDate] = useState('')
-  useEffect(() => { if (open) { setAmount(null); setFrom(defaultFrom); setTargetDate('') } }, [open, defaultFrom])
+  useEffect(() => {
+    if (!open) return
+    // 수정도 '보고 있는 달(적용 시작월)부터' 반영 — 값만 채우고 시작월은 선택월로
+    if (edit) { setAmount(edit.targetAmount); setFrom(defaultFrom); setTargetDate(edit.targetDate ?? '') }
+    else { setAmount(null); setFrom(defaultFrom); setTargetDate('') }
+  }, [open, defaultFrom, edit])
 
   async function save() {
     if (!(Number(amount) > 0)) return
+    // 수정인데 시작월이 원래와 같으면 그 목표를 갱신, 다르면 그 달부터 새 버전(이전 달은 유지)
+    const sameStart = edit && edit.effectiveFrom === from
     const g: Goal = {
-      id: uid(), profileId, targetAmount: amount!,
+      id: sameStart ? edit.id : uid(), profileId, targetAmount: amount!,
       targetDate: targetDate || undefined, effectiveFrom: from,
-      createdAt: new Date().toISOString(),
+      createdAt: sameStart ? edit.createdAt : new Date().toISOString(),
     }
     await repo.upsertGoal(g)
     onClose()
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="목표 추가">
+    <Modal open={open} onClose={onClose} title={edit ? '목표 수정' : '목표 추가'}>
       <p className="text-[12px] text-sub mb-3">‘적용 시작월’부터 이 목표가 적용돼요. 이전 달은 이전 목표 기준으로 그대로 남습니다.</p>
       <Field label="목표 금액 (원)"><AmountInput value={amount} onChange={setAmount} autoFocus /></Field>
       <div className="grid grid-cols-2 gap-3">
@@ -306,7 +407,6 @@ function GoalModal({ open, onClose, profileId, defaultFrom }: { open: boolean; o
         <Field label="목표 시점(선택)"><input type="month" min="2000-01" max="2100-12" value={targetDate} onChange={(e) => setTargetDate(e.target.value)} className={inputCls} /></Field>
       </div>
       <div className="flex gap-2 mt-4 justify-end">
-        <Button variant="line" onClick={onClose}>취소</Button>
         <Button onClick={save}>저장</Button>
       </div>
     </Modal>

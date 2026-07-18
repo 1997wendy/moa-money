@@ -9,8 +9,8 @@ export const signed = (n: number): string => (n >= 0 ? '+' : '-') + won(Math.abs
 /** 억/만 단위 축약 (1.52억) */
 export const compact = (n: number): string => {
   const a = Math.abs(n)
-  if (a >= 1e8) return (n / 1e8).toFixed(2).replace(/\.00$/, '') + '억'
-  if (a >= 1e4) return Math.round(n / 1e4) + '만'
+  if (a >= 1e8) return (n / 1e8).toFixed(2).replace(/\.?0+$/, '') + '억'
+  if (a >= 1e4) return (n / 1e4).toFixed(1).replace(/\.0$/, '') + '만'
   return won(n)
 }
 

@@ -99,7 +99,7 @@ export default function Import() {
 
   return (
     <div>
-      <PageHeader title="가져오기 (엑셀/CSV)" desc="카드·은행 내역을 CSV로 저장해 한 번에 등록" />
+      <PageHeader title="가져오기 (엑셀/CSV)" />
 
       <Card>
         <CardLabel>1. 템플릿 (권장)</CardLabel>
