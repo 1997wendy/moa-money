@@ -13,8 +13,8 @@ import TimeInput from '../components/TimeInput'
 import { occursOn, isPeriod } from '../lib/schedule'
 import type { RepeatKind, Schedule, Transaction, CalSub, Profile } from '../db/types'
 
-// 셀에 그릴 칩 (내부 일정 + 외부 구독 이벤트 공통)
-interface Chip { key: string; time?: string; endTime?: string; title: string; bg: string; fg: string; past: boolean; ext: boolean; period?: { leftCap: boolean; rightCap: boolean }; onClick: () => void }
+// 한 주 안에서 막대 하나(레인 배치 단위) — 하루/여러 날/종일/시간 일정 공통
+interface Seg { key: string; startCol: number; endCol: number; lane: number; title: string; time?: string; endTime?: string; bg: string; fg: string; past: boolean; ext: boolean; allDay: boolean; leftCap: boolean; rightCap: boolean; onClick: () => void }
 const chipPast = (ds: string, time: string | undefined, nowMs: number) => new Date(`${ds}T${time || '23:59'}:00`).getTime() < nowMs
 
 // 맨 위 고정 대상: 종일 or 기간 (시간이 안 흐르는 일정)
@@ -75,66 +75,61 @@ export default function Calendar() {
     ? schedules.filter((s) => `${s.title} ${s.memo ?? ''}`.toLowerCase().includes(search.trim().toLowerCase())).sort((a, b) => a.date.localeCompare(b.date)).slice(0, 30)
     : []
 
-  // 내부 일정 + 외부 구독 이벤트를 한 목록으로 (안 지난 것 먼저 → 시간순)
-  const buildChips = (ds: string): Chip[] => {
-    const chips: Chip[] = []
-    const dow = new Date(ds + 'T00:00').getDay()
-    for (const s of schedulesOn(ds)) {
-      const c = colorOf(s.color)
-      if (isPeriod(s)) {
-        const isStart = ds === s.date, isEnd = ds === s.endDate
-        chips.push({
-          key: 's' + s.id, title: s.title, bg: c.bg, fg: c.fg, ext: false, onClick: () => openEdit(s, s.date),
-          past: (s.endDate ?? '') < today,
-          period: { leftCap: isStart || dow === 0, rightCap: isEnd || dow === 6 },
-          time: isStart ? s.time : undefined,
-          endTime: isEnd ? s.endTime : undefined,
-        })
-      } else {
-        chips.push({ key: 's' + s.id, time: s.time, title: s.title, bg: c.bg, fg: c.fg, past: isPastSch(s, ds, nowMs), ext: false, onClick: () => openEdit(s, ds) })
-      }
-    }
-    for (const e of extEvents[ds] ?? []) {
-      const c = colorOf(e.color)
-      chips.push({ key: 'e' + e.title + (e.time ?? ''), time: e.time, title: e.title, bg: c.bg, fg: c.fg, past: chipPast(ds, e.time, nowMs), ext: true, onClick: () => setDayModal(ds) })
-    }
-    return chips.sort((a, b) => {
-      const pa = !!a.period || !a.time, pb = !!b.period || !b.time // 종일·기간 위로
-      if (pa !== pb) return pa ? -1 : 1
-      if (!pa) {
-        if (a.past !== b.past) return a.past ? 1 : -1
-        if (a.time !== b.time) return a.time! < b.time! ? -1 : 1
-      }
-      return 0
-    })
-  }
-
   function openAdd(ds: string) { setEditSch(undefined); setOccDate(''); setPresetDate(ds); setSchModal(true) }
   function openEdit(s: Schedule, occ: string) { setEditSch(s); setOccDate(occ); setSchModal(true) }
 
-  // 주 단위 + 기간(여러 날) 일정을 '칸 위에 뜨는 하나의 막대'로 배치 (칸 배경에 안 가려지게 오버레이)
-  const LANE_H = 15, BAR_TOP = 22
-  const periodScheds = schedules.filter(isPeriod)
-  const weeks: { wk: (number | null)[]; bars: { s: Schedule; startCol: number; endCol: number; isStart: boolean; isEnd: boolean; lane: number }[]; laneCount: number }[] = []
+  // ===== 주 단위 막대(레인) 배치 — 카카오/구글 방식 =====
+  // 하루/여러 날/종일/시간 일정을 모두 하나의 '레인(줄)' 시스템에 넣어 막대로 그린다.
+  //  여러 날 일정 = 여러 칸을 잇는 긴 막대, 하루 일정 = 한 칸짜리 막대. 같은 레인엔 겹치는 일정 없음 → 세로 정렬 자동.
+  const LANE_H = 20, BAR_TOP = 26, BAR_H = 18, MAX_LANES = 4 // 막대 높이·시작위치·최대 표시 줄
+  const weeks: { wk: (number | null)[]; segs: Seg[]; laneCount: number }[] = []
   for (let w = 0; w < cells.length; w += 7) {
     const wk = cells.slice(w, w + 7)
     const colDate = wk.map((d) => (d ? dateStr(d) : null))
-    const bars: { s: Schedule; startCol: number; endCol: number; isStart: boolean; isEnd: boolean; lane: number }[] = []
-    for (const s of periodScheds) {
-      const cols = colDate.map((cd, c) => (cd && cd >= s.date && cd <= s.endDate! ? c : -1)).filter((c) => c >= 0)
-      if (!cols.length) continue
-      const startCol = cols[0], endCol = cols[cols.length - 1]
-      bars.push({ s, startCol, endCol, isStart: colDate[startCol] === s.date, isEnd: colDate[endCol] === s.endDate, lane: 0 })
+    const raw: Seg[] = []
+    // 여러 날(기간) 일정 → 이 주에서 걸치는 구간을 하나의 막대로
+    for (const s of schedules) {
+      if (!isPeriod(s)) continue
+      let startCol = -1, endCol = -1
+      for (let c = 0; c < 7; c++) { const cd = colDate[c]; if (cd && cd >= s.date && cd <= s.endDate!) { if (startCol < 0) startCol = c; endCol = c } }
+      if (startCol < 0) continue
+      const col = colorOf(s.color)
+      raw.push({ key: `p${s.id}-${w}`, startCol, endCol, lane: 0, title: s.title, time: colDate[startCol] === s.date ? s.time : undefined, endTime: colDate[endCol] === s.endDate ? s.endTime : undefined, bg: col.bg, fg: col.fg, past: (s.endDate ?? '') < today, ext: false, allDay: true, leftCap: colDate[startCol] === s.date, rightCap: colDate[endCol] === s.endDate, onClick: () => openEdit(s, s.date) })
     }
-    bars.sort((a, b) => a.startCol - b.startCol || a.s.date.localeCompare(b.s.date))
-    const laneEnd: number[] = []
-    for (const bar of bars) {
+    // 하루 일정(반복 포함) + 외부 구독 → 각 칸의 한 칸짜리 막대
+    for (let c = 0; c < 7; c++) {
+      const cd = colDate[c]; if (!cd) continue
+      for (const s of schedulesOn(cd)) {
+        if (isPeriod(s)) continue
+        const col = colorOf(s.color)
+        raw.push({ key: `s${s.id}-${cd}`, startCol: c, endCol: c, lane: 0, title: s.title, time: s.time, endTime: undefined, bg: col.bg, fg: col.fg, past: isPastSch(s, cd, nowMs), ext: false, allDay: !s.time, leftCap: true, rightCap: true, onClick: () => openEdit(s, cd) })
+      }
+      for (const e of extEvents[cd] ?? []) {
+        const col = colorOf(e.color)
+        raw.push({ key: `e${cd}${e.title}${e.time ?? ''}`, startCol: c, endCol: c, lane: 0, title: e.title, time: e.time, endTime: undefined, bg: col.bg, fg: col.fg, past: chipPast(cd, e.time, nowMs), ext: true, allDay: !e.time, leftCap: true, rightCap: true, onClick: () => setDayModal(cd) })
+      }
+    }
+    // 레인 배정 우선순위: 여러 날 → 종일 → 시간순 (위쪽 레인 우선)
+    raw.sort((a, b) => {
+      const am = a.endCol > a.startCol, bm = b.endCol > b.startCol
+      if (am !== bm) return am ? -1 : 1
+      if (a.allDay !== b.allDay) return a.allDay ? -1 : 1
+      if (a.time && b.time && a.time !== b.time) return a.time < b.time ? -1 : 1
+      return a.startCol - b.startCol
+    })
+    const laneCols: Set<number>[] = []
+    for (const seg of raw) {
       let lane = 0
-      while (lane < laneEnd.length && laneEnd[lane] >= bar.startCol) lane++
-      laneEnd[lane] = bar.endCol
-      bar.lane = lane
+      for (;; lane++) {
+        if (!laneCols[lane]) laneCols[lane] = new Set()
+        let ok = true
+        for (let c = seg.startCol; c <= seg.endCol; c++) if (laneCols[lane].has(c)) { ok = false; break }
+        if (ok) break
+      }
+      for (let c = seg.startCol; c <= seg.endCol; c++) laneCols[lane].add(c)
+      seg.lane = lane
     }
-    weeks.push({ wk, bars, laneCount: laneEnd.length })
+    weeks.push({ wk, segs: raw, laneCount: laneCols.length })
   }
 
   return (
@@ -179,72 +174,66 @@ export default function Calendar() {
           ))}
         </div>
         <div className="rounded-lg overflow-hidden border-t border-l border-line">
-          {weeks.map((wkData, w) => (
-            <div key={w} className="relative">
-              {wkData.bars.map((bar) => {
-                const c = colorOf(bar.s.color)
-                const past = (bar.s.endDate ?? '') < today
-                return (
-                  <div key={bar.s.id} className="absolute z-10" style={{ left: `${(bar.startCol / 7) * 100}%`, width: `${((bar.endCol - bar.startCol + 1) / 7) * 100}%`, top: BAR_TOP + bar.lane * LANE_H }}>
-                    <button onClick={(e) => { e.stopPropagation(); openEdit(bar.s, bar.s.date) }}
-                      className={`w-[calc(100%-2px)] mx-px text-left text-[10px] font-semibold px-1.5 py-0.5 truncate flex items-center gap-1 ${bar.isStart ? 'rounded-l-md' : ''} ${bar.isEnd ? 'rounded-r-md' : ''} ${past ? 'opacity-45' : ''}`}
-                      style={{ background: c.bg, color: c.fg }}>
-                      {bar.isStart && bar.s.time && <span className="tnum opacity-80 shrink-0">{bar.s.time}</span>}
-                      <span className="truncate flex-1">{bar.isStart ? bar.s.title : ''}</span>
-                      {bar.isEnd && bar.s.endTime && <span className="tnum opacity-80 shrink-0">~{bar.s.endTime}</span>}
-                    </button>
-                  </div>
-                )
-              })}
-              <div className="grid grid-cols-7">
-                {wkData.wk.map((d, ci) => {
-                  const i = w * 7 + ci
-                  const ds = d ? dateStr(d) : ''
-                  const info = d ? byDay[ds] : undefined
-                  const hol = d ? holidayInfo(ds) : undefined
-                  const isRed = ci === 0 || !!hol?.off
-                  const isToday = ds === today
-                  const numColor = isToday ? 'text-white' : isRed ? 'text-expense' : ci === 6 ? 'text-income' : 'text-sub'
-                  const chips = d ? buildChips(ds).filter((ch) => !ch.period) : []
-                  const shown = chips.slice(0, 3)
-                  const moreCount = chips.length - shown.length
-                  return (
-                    <div key={i} onClick={() => d && openAdd(ds)} className={`relative min-h-[104px] p-1.5 pb-5 border-r border-b border-line ${d ? 'cursor-pointer hover:bg-canvas' : 'bg-canvas'} ${isToday ? 'bg-mint-l' : 'bg-surface'}`}>
-                      {d && (
-                        <>
-                          <div className="flex items-center justify-between gap-1">
-                            <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} title="이 날 모아보기" className={`text-[12px] font-semibold shrink-0 ${numColor} ${isToday ? 'bg-mint rounded-full w-[19px] h-[19px] inline-flex items-center justify-center' : 'hover:bg-line/60 rounded px-1 -mx-1'}`}>{d}</button>
-                            {hol && <span className={`text-[9px] font-semibold truncate ${hol.off ? 'text-expense' : 'text-sub'}`}>{hol.name}</span>}
-                          </div>
-                          {wkData.laneCount > 0 && <div style={{ height: wkData.laneCount * LANE_H }} />}
-                          <div className="mt-1 space-y-0.5">
-                            {shown.map((ch) => (
-                              <button key={ch.key} onClick={(e) => { e.stopPropagation(); ch.onClick() }}
-                                className={`w-full text-left text-[10px] font-semibold px-1 py-0.5 rounded truncate flex items-center gap-1 ${ch.past ? 'opacity-40 line-through' : ''}`}
-                                style={{ background: ch.bg, color: ch.fg }}>
-                                {ch.time ? <span className="tnum opacity-80 shrink-0">{ch.time}</span> : <span className="shrink-0 text-[8.5px] font-bold opacity-70 border border-current rounded px-0.5">종일</span>}
-                                <span className="truncate">{ch.title}</span>
-                                {ch.ext && <span className="shrink-0 opacity-70" title="구독 일정">🔗</span>}
-                              </button>
-                            ))}
-                            {moreCount > 0 && (
-                              <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} className="text-[9.5px] text-mint-d font-bold pl-1 hover:underline">+{moreCount}개 더 보기</button>
-                            )}
-                          </div>
-                          {(info?.expense || info?.income) ? (
-                            <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} className="absolute bottom-1 right-1.5 left-1.5 flex items-center justify-end gap-1.5 text-[10px] font-bold tnum">
-                              {info?.income ? <span className="text-income">+{compact(info.income)}</span> : null}
-                              {info?.expense ? <span className="text-expense">-{compact(info.expense)}</span> : null}
-                            </button>
-                          ) : null}
-                        </>
-                      )}
-                    </div>
-                  )
+          {weeks.map((wkData, w) => {
+            // 넘치면 (MAX_LANES-1)줄만 보이고 마지막 줄은 '+N' 자리로
+            const vis = wkData.laneCount > MAX_LANES ? MAX_LANES - 1 : wkData.laneCount
+            const reservedH = Math.min(wkData.laneCount, MAX_LANES) * LANE_H
+            return (
+              <div key={w} className="relative">
+                {/* 일정 막대 오버레이 (칸 위에 떠서 여러 칸을 이어 그림) */}
+                {wkData.segs.filter((s) => s.lane < vis).map((seg) => (
+                  <button key={seg.key} onClick={(e) => { e.stopPropagation(); seg.onClick() }}
+                    style={{ left: `${(seg.startCol / 7) * 100}%`, width: `${((seg.endCol - seg.startCol + 1) / 7) * 100}%`, top: BAR_TOP + seg.lane * LANE_H, height: BAR_H, background: seg.bg, color: seg.fg }}
+                    className={`absolute z-10 text-left text-[10px] leading-none font-semibold px-1.5 truncate flex items-center gap-1 ${seg.leftCap ? 'rounded-l-md ml-px' : ''} ${seg.rightCap ? 'rounded-r-md mr-px' : ''} ${seg.past ? 'opacity-45 line-through' : ''}`}>
+                    {seg.time && <span className="tnum opacity-80 shrink-0">{seg.time}</span>}
+                    <span className="truncate flex-1">{seg.title}</span>
+                    {seg.endTime && <span className="tnum opacity-80 shrink-0">~{seg.endTime}</span>}
+                    {seg.ext && <span className="shrink-0 opacity-70" title="구독 일정">🔗</span>}
+                  </button>
+                ))}
+                {/* +N (칸별로 안 보이는 일정 수) */}
+                {wkData.laneCount > MAX_LANES && wkData.wk.map((d, ci) => {
+                  if (!d) return null
+                  const hidden = wkData.segs.filter((s) => s.lane >= vis && s.startCol <= ci && s.endCol >= ci).length
+                  if (!hidden) return null
+                  const ds = dateStr(d)
+                  return <button key={`more${ci}`} onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} style={{ left: `${(ci / 7) * 100}%`, width: `${(1 / 7) * 100}%`, top: BAR_TOP + vis * LANE_H }} className="absolute z-10 text-left text-[9.5px] text-mint-d font-bold pl-1.5 hover:underline">+{hidden}</button>
                 })}
+                {/* 날짜 칸 */}
+                <div className="grid grid-cols-7">
+                  {wkData.wk.map((d, ci) => {
+                    const i = w * 7 + ci
+                    const ds = d ? dateStr(d) : ''
+                    const info = d ? byDay[ds] : undefined
+                    const hol = d ? holidayInfo(ds) : undefined
+                    const isRed = ci === 0 || !!hol?.off
+                    const isToday = ds === today
+                    const numColor = isToday ? 'text-white' : isRed ? 'text-expense' : ci === 6 ? 'text-income' : 'text-sub'
+                    return (
+                      <div key={i} onClick={() => d && openAdd(ds)} className={`relative min-h-[104px] p-1.5 pb-5 border-r border-b border-line ${d ? 'cursor-pointer hover:bg-canvas' : 'bg-canvas'} ${isToday ? 'bg-mint-l' : 'bg-surface'}`}>
+                        {d && (
+                          <>
+                            <div className="flex items-center justify-between gap-1 h-5">
+                              <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} title="이 날 모아보기" className={`text-[12px] font-semibold shrink-0 ${numColor} ${isToday ? 'bg-mint rounded-full w-[19px] h-[19px] inline-flex items-center justify-center' : 'hover:bg-line/60 rounded px-1 -mx-1'}`}>{d}</button>
+                              {hol && <span className={`text-[9px] font-semibold truncate ${hol.off ? 'text-expense' : 'text-sub'}`}>{hol.name}</span>}
+                            </div>
+                            {/* 막대들이 차지할 자리 확보 (모든 칸 동일 높이 → 세로 정렬) */}
+                            <div style={{ height: reservedH }} />
+                            {(info?.expense || info?.income) ? (
+                              <button onClick={(e) => { e.stopPropagation(); setDayModal(ds) }} className="absolute bottom-1 right-1.5 left-1.5 flex items-center justify-end gap-1.5 text-[10px] font-bold tnum">
+                                {info?.income ? <span className="text-income">+{compact(info.income)}</span> : null}
+                                {info?.expense ? <span className="text-expense">-{compact(info.expense)}</span> : null}
+                              </button>
+                            ) : null}
+                          </>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
               </div>
-            </div>
-          ))}
+            )
+          })}
         </div>
         <div className="flex gap-4 mt-3 text-[12px] text-sub flex-wrap">
           <span className="flex items-center gap-1"><i className="w-2.5 h-2.5 rounded-sm bg-expense inline-block" />지출</span>

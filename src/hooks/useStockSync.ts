@@ -11,7 +11,7 @@ export function useStockSync(profileId: string) {
     done.current = profileId
     ;(async () => {
       const assets = await repo.listAssets(profileId)
-      const us = assets.filter((a) => (a.type === 'stock' || a.type === 'etf') && a.market === 'us' && a.currency === 'USD' && a.quantity && a.ticker)
+      const us = assets.filter((a) => (a.type === 'stock' || a.type === 'etf') && a.market === 'us' && a.currency === 'USD' && a.quantity && a.ticker && !a.archived)
       if (us.length === 0) return
       try {
         const symbols = Array.from(new Set(us.map((a) => a.ticker!.toUpperCase())))
@@ -24,7 +24,7 @@ export function useStockSync(profileId: string) {
           if (p) {
             await repo.upsertAsset({
               ...a, currency: 'USD', unitPrice: p,
-              amount: Math.round(a.quantity! * p),
+              amount: Math.floor(a.quantity! * p * 100) / 100, // 달러는 소수 2자리 유지·내림 ($0.69 등)
               fxRate: fx || a.fxRate,
               updatedAt: new Date().toISOString(),
             })

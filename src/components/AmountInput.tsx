@@ -10,7 +10,8 @@ export function evalAmount(raw: string): number | null {
   try {
     // eslint-disable-next-line no-new-func
     const v = Function(`"use strict";return (${s})`)()
-    return typeof v === 'number' && isFinite(v) ? Math.round(v) : null
+    // 170001/2=85000.5 처럼 소수가 나오면 '내림' (반올림 아님). 정산 마지막 빈칸이 나머지를 먹어 합은 정확
+    return typeof v === 'number' && isFinite(v) ? Math.floor(v) : null
   } catch {
     return null
   }
@@ -60,7 +61,7 @@ export default function AmountInput({
             setText('')
             onChange(null)
           } else {
-            const n = Math.round(Number(cleaned) || 0)
+            const n = Math.floor(Number(cleaned) || 0)
             setText(withComma(n))
             onChange(n)
           }

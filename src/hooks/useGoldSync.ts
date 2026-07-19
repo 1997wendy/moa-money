@@ -15,7 +15,7 @@ export function useGoldSync(profileId: string) {
       const price = await getGoldKrwPerGram()
       if (!price) return
       for (const a of golds) {
-        await repo.upsertAsset({ ...a, unitPrice: price, amount: Math.round(a.quantity! * price), updatedAt: new Date().toISOString() })
+        await repo.upsertAsset({ ...a, unitPrice: price, amount: Math.floor(a.quantity! * price), updatedAt: new Date().toISOString() })
       }
     })()
   }, [profileId])

@@ -6,7 +6,7 @@ import { useProfile } from '../state/profile'
 import { won, compact, signed, thisMonth, monthLabel, addMonth } from '../lib/format'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
-import { krwValue } from '../lib/assets'
+import { krwValue, repayableTotal } from '../lib/assets'
 import { EXPENSE_CATS } from '../lib/categories'
 import { detectFixed } from '../lib/fixedCost'
 
@@ -34,8 +34,10 @@ export default function Stats() {
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId]) // undefined = 로딩중
   const goals = useLiveQuery(() => (profileId ? repo.listGoals(profileId) : []), [profileId], [])
+  const supports = useLiveQuery(() => (profileId ? repo.listSupports(profileId) : []), [profileId], [])
 
-  const totalAssets = (assets ?? []).reduce((s, a) => s + krwValue(a), 0)
+  // '내 돈만' 기준 (받은 돈 중 돌려줄 돈 제외)
+  const totalAssets = (assets ?? []).reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports)
   const now = thisMonth()
 
   const activeGoal = useMemo(

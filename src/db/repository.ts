@@ -17,6 +17,7 @@ import type {
   RecurringExpense,
   RecurringReceivable,
   Schedule,
+  Support,
   Transaction,
 } from './types'
 
@@ -47,6 +48,7 @@ export const repo = {
       db.recurring.where('profileId').equals(id).delete(),
       db.recurringTx.where('profileId').equals(id).delete(),
       db.categories.where('profileId').equals(id).delete(),
+      db.supports.where('profileId').equals(id).delete(),
     ])
     await db.profiles.delete(id)
   },
@@ -115,6 +117,14 @@ export const repo = {
   upsertRecurringExpense: (r: RecurringExpense) => db.recurringTx.put(r),
   deleteRecurringExpense: (id: ID) => db.recurringTx.delete(id),
 
+  // ---- Supports (가족에게 받은 돈) ----
+  async listSupports(profileId: ID): Promise<Support[]> {
+    const rows = await db.supports.where('profileId').equals(profileId).toArray()
+    return rows.sort((a, b) => a.order - b.order)
+  },
+  upsertSupport: (s: Support) => db.supports.put(s),
+  deleteSupport: (id: ID) => db.supports.delete(id),
+
   // ---- Categories ----
   listCategories: (profileId: ID) =>
     db.categories.where('profileId').equals(profileId).sortBy('order'),
@@ -138,16 +148,16 @@ export const repo = {
 
   // ---- 백업 (전체 내보내기/불러오기) ----
   async exportAll() {
-    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx] =
+    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx, supports] =
       await Promise.all([
         db.profiles.toArray(), db.assets.toArray(), db.transactions.toArray(),
         db.schedules.toArray(), db.cards.toArray(), db.goals.toArray(),
         db.people.toArray(), db.recurring.toArray(), db.categories.toArray(), db.coachNotes.toArray(), db.monthNotes.toArray(),
-        db.recurringTx.toArray(),
+        db.recurringTx.toArray(), db.supports.toArray(),
       ])
     return {
-      app: 'money-app', version: 4, exportedAt: new Date().toISOString(),
-      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx,
+      app: 'money-app', version: 5, exportedAt: new Date().toISOString(),
+      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx, supports,
     }
   },
   /** 로컬 전체 비우기 (계정 로그아웃/전환 시). 동기화 훅 억제. */
@@ -167,21 +177,21 @@ export const repo = {
   async exportProfile(profileId: ID) {
     const by = (t: { where: (k: string) => { equals: (v: string) => { toArray: () => Promise<unknown[]> } } }) =>
       t.where('profileId').equals(profileId).toArray()
-    const [profile, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes] =
+    const [profile, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, supports] =
       await Promise.all([
         db.profiles.get(profileId),
         by(db.assets), by(db.transactions), by(db.schedules), by(db.cards), by(db.goals),
-        by(db.people), by(db.recurring), by(db.categories), by(db.coachNotes),
+        by(db.people), by(db.recurring), by(db.categories), by(db.coachNotes), by(db.supports),
       ])
     return {
       app: 'money-app', version: 2, shared: true, profileId,
       profiles: profile ? [profile] : [],
-      assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes,
+      assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, supports,
     }
   },
   async importAll(data: Record<string, unknown>) {
     const arr = <T,>(key: string): T[] => (Array.isArray(data[key]) ? (data[key] as T[]) : [])
-    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories, db.coachNotes, db.monthNotes, db.recurringTx]
+    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories, db.coachNotes, db.monthNotes, db.recurringTx, db.supports]
     await db.transaction('rw', tables, async () => {
       await Promise.all(tables.map((t) => t.clear()))
       await db.profiles.bulkPut(arr<Profile>('profiles'))
@@ -196,6 +206,7 @@ export const repo = {
       await db.coachNotes.bulkPut(arr<CoachNote>('coachNotes'))
       await db.monthNotes.bulkPut(arr<MonthNote>('monthNotes'))
       await db.recurringTx.bulkPut(arr<RecurringExpense>('recurringTx'))
+      await db.supports.bulkPut(arr<Support>('supports'))
     })
   },
 }

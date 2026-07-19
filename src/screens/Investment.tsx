@@ -8,7 +8,7 @@ import { useStockSync } from '../hooks/useStockSync'
 import { useKrStockSync } from '../hooks/useKrStockSync'
 import { useGoldSync } from '../hooks/useGoldSync'
 import { won, signed, thisMonth, todayISO } from '../lib/format'
-import { groupOf, krwValue } from '../lib/assets'
+import { groupOf, krwValue, repayableTotal } from '../lib/assets'
 import { detectFixed } from '../lib/fixedCost'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, inputCls } from '../components/ui'
 import type { Asset, CoachNote, Transaction } from '../db/types'
@@ -48,6 +48,7 @@ export default function Investment() {
   useKrStockSync(profileId)
   useGoldSync(profileId)
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
+  const supports = useLiveQuery(() => (profileId ? repo.listSupports(profileId) : []), [profileId], [])
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId) : []), [profileId], [])
   const notes = useLiveQuery(() => (profileId ? repo.listCoachNotes(profileId) : []), [profileId])
   const noteList = notes ?? []
@@ -70,8 +71,10 @@ export default function Investment() {
       }
       m[bucketOf(a)] += krwValue(a)
     }
+    // '내 돈만' 기준 — 돌려줘야 하는 받은 돈은 현금성(예적금)에서 차감
+    m.cash = Math.max(0, m.cash - repayableTotal(supports))
     return m
-  }, [assets])
+  }, [assets, supports])
   const total = BUCKETS.reduce((s, b) => s + sums[b.key], 0)
   // 목표 비중은 연금보험(기타) 제외한 투자 자산만 대상
   const ALLOC = BUCKETS.filter((b) => b.key !== 'etc')

@@ -1,5 +1,6 @@
 // 자산 분류 체계 · 기관 목록 · 통화/환산 · 이자 헬퍼
-import type { Asset } from '../db/types'
+import type { Asset, Support } from '../db/types'
+import { thisMonth } from './format'
 
 export type AssetGroupKey = 'cash' | 'saving' | 'invest' | 'pension' | 'etc'
 
@@ -59,6 +60,9 @@ export const BANKS = [
 export const SECURITIES = ['키움증권', '미래에셋증권', '삼성증권', 'NH투자증권', '한국투자증권', 'KB증권', '신한투자증권', '토스증권', '카카오페이증권', '하나증권', '대신증권', '메리츠증권', '유안타증권', '한화투자증권', '신영증권', 'DB금융투자', '교보증권', 'IBK투자증권', '현대차증권', '하이투자증권', '유진투자증권', 'SK증권', '다올투자증권', 'BNK투자증권', '상상인증권']
 export const PENSION_KINDS = ['연금보험', 'IRP', '연금저축펀드', '연금저축보험', '퇴직연금', '기타']
 export const EXCHANGES = ['업비트', '빗썸', '코인원', '코빗', '바이낸스', '바이비트', 'OKX', '게이트아이오', '기타']
+// 연금 가입 기관(플랫폼): 보험사 + 증권사 + 은행 (IRP·연금저축펀드는 증권/은행, 연금보험은 보험사)
+export const INSURERS = ['삼성생명', '한화생명', '교보생명', '신한라이프', 'NH농협생명', '미래에셋생명', '동양생명', 'KB라이프', '흥국생명', 'DB생명', '삼성화재', 'DB손해보험', '현대해상', 'KB손해보험', '메리츠화재']
+export const PENSION_PROVIDERS = [...SECURITIES, ...INSURERS, ...BANKS]
 
 export interface Currency { code: string; label: string; symbol: string }
 export const CURRENCIES: Currency[] = [
@@ -68,13 +72,29 @@ export const CURRENCIES: Currency[] = [
   { code: 'VND', label: '동 (VND)', symbol: '₫' },
 ]
 
-/** 자산의 원화 환산 금액 */
+/** 한 통화 금액 → 원화 (환율 없으면 0 취급). 원 단위 미만은 '내림'(버림) — 자산을 부풀리지 않게 */
+const toKrw = (amount: number, currency?: string, fx?: number): number =>
+  !currency || currency === 'KRW' ? amount : fx ? Math.floor(amount * fx) : 0
+
+/** 자산의 원화 환산 금액 (본 통화 + 추가 외화잔액 합산) */
 export function krwValue(a: Asset): number {
-  if (!a.currency || a.currency === 'KRW') return a.amount
-  return a.fxRate ? Math.round(a.amount * a.fxRate) : 0
+  let v = toKrw(a.amount, a.currency, a.fxRate)
+  for (const b of a.extraBalances ?? []) v += toKrw(b.amount, b.currency, b.fxRate)
+  return v
 }
 
-/** 투자자산 원금·수익. 자산 통화 기준. (계좌형은 예수금 제외한 종목 합산으로) */
+/** 매입금액(원금)의 원화 환산. principalCurrency 우선, 없으면 자산 통화 기준 */
+export function principalKrw(a: Asset): number | undefined {
+  const p = a.principal ?? (a.quantity && a.avgPrice ? a.quantity * a.avgPrice : undefined)
+  if (p == null) return undefined
+  const pc = a.principalCurrency ?? a.currency ?? 'KRW'
+  if (pc === 'KRW') return p
+  // 매입 통화 환율: principalFx 우선(코인을 달러로 산 경우), 없으면 자산 통화와 같을 때 자산 환율
+  const fx = a.principalFx ?? (pc === a.currency ? a.fxRate : undefined)
+  return fx ? Math.floor(p * fx) : p
+}
+
+/** 투자자산 원금·수익 — 모두 '원화' 기준으로 통일 (계좌형은 예수금 제외한 종목 합산) */
 export function investPnl(a: Asset): { principal: number; profit: number; pct: number } | null {
   if (a.holdings && a.holdings.length) {
     const principal = a.holdings.reduce((s, h) => s + (h.principal || 0), 0)
@@ -83,9 +103,9 @@ export function investPnl(a: Asset): { principal: number; profit: number; pct: n
     const profit = value - principal
     return { principal, profit, pct: (profit / principal) * 100 }
   }
-  const principal = a.principal ?? (a.quantity && a.avgPrice ? a.quantity * a.avgPrice : undefined)
+  const principal = principalKrw(a)
   if (!principal || principal <= 0) return null
-  const profit = a.amount - principal
+  const profit = krwValue(a) - principal
   return { principal, profit, pct: (profit / principal) * 100 }
 }
 
@@ -108,14 +128,43 @@ export function expectedInterest(a: Asset): { annual: number; annualNet: number;
   const bal = krwValue(a)
   if (bal <= 0) return null
   const taxRate = TAX_RATES[a.taxType ?? 'normal'] ?? INTEREST_TAX
-  const net = (v: number) => Math.round(v * (1 - taxRate))
-  const annual = Math.round((bal * a.rate) / 100)
+  // 이자도 원 미만은 '내림' — 예상 이자를 실제보다 크게 잡지 않게
+  const net = (v: number) => Math.floor(v * (1 - taxRate))
+  const annual = Math.floor((bal * a.rate) / 100)
   const base = { annual, annualNet: net(annual) }
   if (!a.maturity || !a.startDate) return base
   const [sy, sm] = a.startDate.split('-').map(Number)
   const [my, mm] = a.maturity.split('-').map(Number)
   const months = Math.max(0, (my - sy) * 12 + (mm - sm))
   if (months <= 0) return base
-  const toMaturity = Math.round((annual * months) / 12)
+  const toMaturity = Math.floor((annual * months) / 12)
   return { ...base, months, toMaturity, toMaturityNet: net(toMaturity) }
 }
+
+// ===== 가족에게 받은 돈 (부모님 지원금) =====
+
+export const SUPPORT_PROVIDERS: { key: Support['provider']; label: string; emoji: string }[] = [
+  { key: 'mom', label: '엄마', emoji: '👩' },
+  { key: 'dad', label: '아빠', emoji: '👨' },
+  { key: 'other', label: '기타', emoji: '🧑' },
+]
+export const providerLabel = (s: Support): string =>
+  s.provider === 'other' ? (s.providerName?.trim() || '기타') : (SUPPORT_PROVIDERS.find((p) => p.key === s.provider)?.label ?? '')
+
+/** 시작월~종료월(없으면 이번달) 사이 받은 개월수 (양끝 포함) */
+export function supportMonths(s: Support): number {
+  if (s.kind !== 'monthly' || !s.startMonth) return 0
+  const end = s.endMonth || thisMonth()
+  const [sy, sm] = s.startMonth.split('-').map(Number)
+  const [ey, em] = end.split('-').map(Number)
+  return Math.max(0, (ey - sy) * 12 + (em - sm) + 1)
+}
+
+/** 한 지원 항목의 누적 금액 (매달=월금액×개월수, 일시금=amount) */
+export function supportTotal(s: Support): number {
+  return s.kind === 'monthly' ? (s.monthlyAmount || 0) * supportMonths(s) : (s.amount || 0)
+}
+
+/** 돌려줘야 하는(repay) 지원금 합계 — '내 돈만'에서 차감할 금액 */
+export const repayableTotal = (supports: Support[]): number =>
+  supports.filter((s) => s.repay).reduce((sum, s) => sum + supportTotal(s), 0)

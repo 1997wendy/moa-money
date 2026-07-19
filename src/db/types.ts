@@ -42,6 +42,10 @@ export interface Asset {
   unitPrice?: number // 단가
   ticker?: string // 종목 코드
   principal?: number // 투자 원금 (투자자산: 원금 대비 수익 계산)
+  principalCurrency?: string // 매입금액(principal)을 넣은 통화. 없으면 자산 통화(currency) 기준. 예: 해외주식인데 원화로 매입금액 입력
+  principalFx?: number // 매입 통화가 자산 통화와 다를 때(코인을 달러로 매수 등) 원화 환산용 환율
+  manual?: boolean // 시세연동 없이 직접 입력한 투자(검색 안 되는 펀드 등) — amount=평가액 직접
+  extraBalances?: ExtraBalance[] // 한 입출금 계좌 안의 추가 외화 잔액(원화+달러 동시 보유 등)
   holdings?: Holding[] // 계좌형(IRP·연금저축펀드 등) 개별 보유 종목. amount=Σ평가액+cash
   cash?: number // 계좌형 예수금(현금). 총 평가액에 포함, 수익 계산엔 제외
   rate?: number // 예적금·입출금(통장) 금리 (연 %)
@@ -52,6 +56,14 @@ export interface Asset {
   subLabel?: string // 세부 종류 (연금: 연금보험/IRP/…, 입출금: 현금)
   archived?: boolean // 보관(목록에서 숨김) — 상폐·해지된 자산 등
   updatedAt: string // ISO
+}
+
+/** 한 계좌 안의 추가 외화 잔액 (입출금 통장에 원화 + 달러가 함께 있을 때) */
+export interface ExtraBalance {
+  id: ID
+  currency: string // 'USD' | 'JPY' | 'VND' …
+  amount: number // 외화 금액
+  fxRate?: number // 외화 1단위 → 원화 환율
 }
 
 /** 계좌형 자산의 개별 보유 종목 (IRP·연금저축펀드 안의 주식/펀드 각각) */
@@ -207,6 +219,29 @@ export interface RecurringExpense {
   memo?: string
   active: boolean // 자동 입력 on/off
   lastRun?: string // 마지막으로 생성한 달 (yyyy-mm)
+  createdAt: string
+}
+
+/**
+ * 가족에게 받은 돈 (엄마·아빠 지원금). 자산에 섞여 있지만 '온전한 내 돈'과 구분하기 위해 따로 기록.
+ * - kind='monthly': 매달 받음 → 누적액 = 월금액 × 받은 개월수(시작월~종료월 또는 이번달)
+ * - kind='lump':    일시금(증여·펀드 등)
+ * - repay=true 인 항목만 '내 돈만'에서 차감 (증여·연금보험처럼 안 갚아도 되는 건 이미 내 돈이라 제외 안 함)
+ */
+export interface Support {
+  id: ID
+  profileId: ID
+  provider: 'mom' | 'dad' | 'other' // 준 사람
+  providerName?: string // other일 때 표시 이름 (예: 할머니)
+  label: string // 항목명 (예: 매달 받는 생활비 / 증여 / 씨티은행 펀드)
+  kind: 'monthly' | 'lump'
+  amount?: number // 일시금 금액 (kind='lump')
+  monthlyAmount?: number // 월 금액 (kind='monthly')
+  startMonth?: string // yyyy-mm 받기 시작한 달 (kind='monthly')
+  endMonth?: string // yyyy-mm 마지막으로 받은 달 (없으면 이번 달까지 계속)
+  repay: boolean // 돌려줘야 할 수도 있음 → '내 돈만'에서 차감
+  note?: string
+  order: number
   createdAt: string
 }
 

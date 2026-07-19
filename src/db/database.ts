@@ -15,6 +15,7 @@ import type {
   RecurringExpense,
   RecurringReceivable,
   Schedule,
+  Support,
   Transaction,
 } from './types'
 
@@ -31,6 +32,7 @@ export class MoneyDB extends Dexie {
   coachNotes!: Table<CoachNote, string>
   monthNotes!: Table<MonthNote, string>
   recurringTx!: Table<RecurringExpense, string>
+  supports!: Table<Support, string>
 
   constructor() {
     super('money-app')
@@ -53,6 +55,9 @@ export class MoneyDB extends Dexie {
     })
     this.version(4).stores({
       recurringTx: 'id, profileId',
+    })
+    this.version(5).stores({
+      supports: 'id, profileId',
     })
   }
 }

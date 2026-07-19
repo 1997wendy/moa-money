@@ -26,7 +26,7 @@ export function useHoldingSync(profileId: string) {
           if (!h.ticker || !h.quantity) return h
           const price = h.live === 'coin' ? coinPrices[h.ticker] : krPrices[h.ticker]
           if (!price) return h
-          const value = Math.round(h.quantity * price)
+          const value = Math.floor(h.quantity * price)
           if (price === h.unitPrice && value === h.value) return h
           changed = true
           return { ...h, unitPrice: price, value }

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { X, Plus, ChevronDown } from 'lucide-react'
+import { X, Plus, ChevronDown, Check } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
@@ -14,16 +14,42 @@ import { getGoldKrwPerGram } from '../lib/goldPrice'
 import { useGoldSync } from '../hooks/useGoldSync'
 import { useHoldingSync } from '../hooks/useHoldingSync'
 import { fetchFxRate } from '../lib/fx'
-import { won, todayISO } from '../lib/format'
+import { won, money, curSymbol, smallPrice, todayISO } from '../lib/format'
 import {
-  SUBTYPES, GROUPS, BANKS, SECURITIES, EXCHANGES, PENSION_KINDS, CURRENCIES, TAX_LABELS, TAX_RATES, subOf, groupOf, krwValue, investPnl, expectedInterest,
+  SUBTYPES, BANKS, SECURITIES, EXCHANGES, PENSION_KINDS, PENSION_PROVIDERS, CURRENCIES, TAX_LABELS, TAX_RATES, subOf, groupOf, krwValue, investPnl, expectedInterest, repayableTotal,
 } from '../lib/assets'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
 import Autocomplete from '../components/Autocomplete'
 import DateInput from '../components/DateInput'
 import DecimalInput from '../components/DecimalInput'
-import type { Asset, Holding } from '../db/types'
+import SupportSection from '../components/SupportSection'
+import type { Asset, Holding, ExtraBalance } from '../db/types'
+
+// ===== 표시용 그룹 (투자는 주식·ETF / 코인 / 금 별도 블럭으로 쪼갬) =====
+interface DGroup { key: string; label: string; emoji: string; color: string }
+const DGROUPS: DGroup[] = [
+  { key: 'cash', label: '입출금·현금', emoji: '💵', color: '#14b8a6' }, // teal
+  { key: 'saving', label: '예적금', emoji: '🏦', color: '#3b82f6' }, // blue
+  { key: 'invest_stock', label: '주식·ETF', emoji: '📈', color: '#8b5cf6' }, // violet
+  { key: 'invest_coin', label: '코인', emoji: '🪙', color: '#ec4899' }, // pink
+  { key: 'invest_gold', label: '금', emoji: '🥇', color: '#f59e0b' }, // amber
+  { key: 'pension', label: '연금', emoji: '🛡️', color: '#10b981' }, // green
+  { key: 'etc', label: '기타·포인트', emoji: '📦', color: '#94a3b8' }, // slate
+]
+// 주식·ETF 블럭 안 소분류 순서 (국내주식→해외주식→국내ETF→해외ETF)
+const STOCK_SUB_ORDER = ['kr_stock', 'us_stock', 'kr_etf', 'us_etf']
+const stockSub = (a: Asset) => `${a.market === 'us' ? 'us' : 'kr'}_${a.type === 'etf' ? 'etf' : 'stock'}`
+const stockSubLabel = (sub: string) => ({ kr_stock: '국내주식', us_stock: '해외주식', kr_etf: '국내 ETF', us_etf: '해외 ETF' } as Record<string, string>)[sub] ?? sub
+
+// 자산 → 표시 그룹 키
+function dgroupOf(a: Asset): string {
+  const g = groupOf(a.type)
+  if (g !== 'invest') return g
+  if (a.type === 'coin') return 'invest_coin'
+  if (a.type === 'gold') return 'invest_gold'
+  return 'invest_stock' // 주식·ETF
+}
 
 // 목록에서 이름 옆에 붙일 뱃지 (예금/적금 · 주식/ETF/코인/금 · 현금)
 function assetBadge(a: Asset): string | null {
@@ -49,10 +75,17 @@ const isHidden = (a: Asset): boolean => !!a.archived || krwValue(a) === 0 || isE
 // 총액에 포함되는 자산: 상폐·만료는 제외(다른 곳으로 이동/정리될 돈)
 const countsToTotal = (a: Asset): boolean => !a.archived && !isExpired(a)
 
-const symbolOf = (code?: string) => CURRENCIES.find((c) => c.code === (code ?? 'KRW'))?.symbol ?? '₩'
 const PENSION_INVEST = ['IRP', '연금저축펀드', '퇴직연금']
 
+// 아주 작은 수(0.00000035)를 지수표기(3.5e-7)가 아닌 일반 소수 문자열로
+const numStr = (n: number): string => {
+  if (!n) return n === 0 ? '0' : ''
+  const s = String(n)
+  return s.includes('e') ? n.toFixed(20).replace(/0+$/, '').replace(/\.$/, '') : s
+}
+
 const COLLAPSE_KEY = 'moa.assets.collapsed'
+const UPDATED_KEY = 'moa.assets.updated'
 
 // 화면이 넓은지(PC 2열) 감지
 function useIsWide() {
@@ -86,7 +119,26 @@ export default function Assets() {
   const toggleHidden = (k: string) => setOpenHidden((o) => ({ ...o, [k]: !o[k] }))
   const wide = useIsWide()
 
+  // 업데이트 모드: '업데이트 시작'을 눌러야 체크박스가 나타남. 은행앱 대조하며 갱신한 항목을 체크 → '업데이트 완료'로 숨김.
+  // 체크 상태·모드는 이 기기에만 저장(동기화 안 함).
+  const updatedKey = `${UPDATED_KEY}.${profileId}`
+  const modeKey = `${UPDATED_KEY}.mode.${profileId}`
+  const [updated, setUpdated] = useState<Set<string>>(new Set())
+  const [updateMode, setUpdateMode] = useState(false)
+  useEffect(() => {
+    try { setUpdated(new Set(JSON.parse(localStorage.getItem(updatedKey) || '[]'))) } catch { setUpdated(new Set()) }
+    setUpdateMode(localStorage.getItem(modeKey) === '1')
+  }, [updatedKey, modeKey])
+  const mutateUpdated = (fn: (s: Set<string>) => void) => setUpdated((prev) => { const s = new Set(prev); fn(s); try { localStorage.setItem(updatedKey, JSON.stringify([...s])) } catch { /* noop */ } return s })
+  const toggleUpdated = (id: string) => mutateUpdated((s) => { s.has(id) ? s.delete(id) : s.add(id) })
+  const markUpdated = (id: string) => { if (updateMode) mutateUpdated((s) => { s.add(id) }) } // 업데이트 모드일 때만 저장 시 자동 체크
+  const startUpdate = () => { mutateUpdated((s) => s.clear()); setUpdateMode(true); try { localStorage.setItem(modeKey, '1') } catch { /* noop */ } }
+  const finishUpdate = () => { mutateUpdated((s) => s.clear()); setUpdateMode(false); try { localStorage.setItem(modeKey, '0') } catch { /* noop */ } }
+
+  const supports = useLiveQuery(() => (profileId ? repo.listSupports(profileId) : []), [profileId], [])
   const total = assets.filter(countsToTotal).reduce((s, a) => s + krwValue(a), 0)
+  const repayable = repayableTotal(supports) // 돌려줘야 하는 지원금
+  const myMoney = total - repayable // '온전한 내 돈'
 
   // 만기 임박 먼저(임박순), 그다음 금액 큰 순
   const sortItems = (a: Asset, b: Asset) => {
@@ -95,19 +147,34 @@ export default function Assets() {
     if (sa && sb) return daysToMaturity(a)! - daysToMaturity(b)!
     return krwValue(b) - krwValue(a)
   }
+  // 입출금·현금은 금리 높은 순으로 (금리 같으면 금액 순)
+  const sortCash = (a: Asset, b: Asset) => ((b.rate ?? 0) - (a.rate ?? 0)) || (krwValue(b) - krwValue(a))
 
-  const byGroup = GROUPS.map((g) => {
-    const all = assets.filter((a) => groupOf(a.type) === g.key)
-    const vis = all.filter((a) => !isHidden(a))
-    const hidden = all.filter(isHidden).sort((a, b) => krwValue(b) - krwValue(a))
-    const subGroups = SUBTYPES.filter((s) => vis.some((a) => subOf(a.type).key === s.key)).map((s) => {
-      const items = vis.filter((a) => subOf(a.type).key === s.key).sort(sortItems)
+  // 한 표시그룹의 소분류(subGroups) 만들기
+  const buildSubs = (gkey: string, vis: Asset[]) => {
+    const sorter = gkey === 'cash' ? sortCash : sortItems
+    const mk = (key: string, label: string, items: Asset[]) => {
       let prin = 0, prof = 0
       for (const a of items.filter(countsToTotal)) { const p = investPnl(a); if (p) { prin += p.principal; prof += p.profit } }
-      return { key: s.key, label: s.label, items, pnl: prin > 0 ? { profit: prof, pct: (prof / prin) * 100 } : null }
-    })
+      return { key, label, items: [...items].sort(sorter), pnl: prin > 0 ? { profit: prof, pct: (prof / prin) * 100 } : null }
+    }
+    if (gkey === 'invest_stock') {
+      // 국내주식/해외주식/국내ETF/해외ETF 소제목 분리
+      return STOCK_SUB_ORDER
+        .map((sub) => ({ sub, items: vis.filter((a) => stockSub(a) === sub) }))
+        .filter((x) => x.items.length > 0)
+        .map((x) => mk(x.sub, stockSubLabel(x.sub), x.items))
+    }
+    return [mk(gkey, '', vis)] // 단일 소분류
+  }
+
+  const byGroup = DGROUPS.map((g) => {
+    const all = assets.filter((a) => dgroupOf(a) === g.key)
+    const vis = all.filter((a) => !isHidden(a))
+    // 입출금은 숨김(0원)도 금리순, 나머지는 금액순
+    const hidden = all.filter(isHidden).sort(g.key === 'cash' ? sortCash : (a, b) => krwValue(b) - krwValue(a))
+    const subGroups = buildSubs(g.key, vis)
     const sum = all.filter(countsToTotal).reduce((s, a) => s + krwValue(a), 0)
-    // 그룹 총 수익률 (투자·연금 등 투자성 자산) — 원금 대비 손익
     let gPrin = 0, gProf = 0
     for (const a of all.filter(countsToTotal)) { const p = investPnl(a); if (p) { gPrin += p.principal; gProf += p.profit } }
     const pnl = gPrin > 0 ? { profit: gProf, pct: (gProf / gPrin) * 100 } : null
@@ -134,14 +201,19 @@ export default function Assets() {
     const expired = isExpired(a)
     const soon = isMaturingSoon(a)
     const dday = daysToMaturity(a)
+    const isUpd = updateMode && updated.has(a.id)
     return (
-      <div key={a.id} className={`py-2.5 border-b border-line last:border-0 ${muted ? 'opacity-60' : ''}`}>
+      <div key={a.id} className={`py-2.5 border-b border-line last:border-0 ${muted ? 'opacity-60' : ''} ${isUpd ? 'bg-mint-l/50 -mx-1 px-1 rounded-lg' : ''}`}>
         <div className="flex items-center gap-2">
+          {updateMode && (
+            <button onClick={() => toggleUpdated(a.id)} title={isUpd ? '체크 해제' : '업데이트했다고 체크'} className={`shrink-0 w-[18px] h-[18px] rounded-full border flex items-center justify-center transition-colors ${isUpd ? 'bg-mint border-mint text-white' : 'border-line text-transparent hover:border-mint'}`}><Check size={11} strokeWidth={3} /></button>
+          )}
           <div onClick={() => openEdit(a)} className="flex-1 min-w-0 flex items-center justify-between cursor-pointer hover:bg-canvas -ml-2 pl-2 rounded-lg">
             <div className="min-w-0 pr-2">
               <div className="flex items-center gap-1.5 min-w-0">
                 <span className="text-[13.5px] font-semibold truncate">{a.name}</span>
                 {assetBadge(a) && <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-canvas text-sub">{assetBadge(a)}</span>}
+                {a.manual && <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-[#eef2ff] text-[#6366f1]">수동</span>}
                 {soon && <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-[#fef2df] text-[#b7791f]">만기 {dday === 0 ? '오늘' : `D-${dday}`}</span>}
                 {expired && <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-[#fdecec] text-expense">만료</span>}
                 {a.archived && <span className="shrink-0 text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-[#fdecec] text-expense">상폐</span>}
@@ -149,18 +221,29 @@ export default function Assets() {
               <div className="text-[11px] text-sub truncate">
                 {[
                   subOf(a.type).pension && a.subLabel ? a.subLabel : null,
-                  a.institution && a.institution !== a.name ? a.institution : null,
+                  a.institution || null,
                   a.ticker || null,
                   a.holdings && a.holdings.length ? `${a.holdings.length}종목` : null,
                   a.rate ? `연 ${a.rate}%${a.maturity ? ` · ~${a.maturity.slice(2)}` : ' 무기한'}` : null,
                 ].filter(Boolean).join(' · ')}
               </div>
               {interest && <div className="text-[11px] text-mint-d">💰 {interest.toMaturityNet != null ? `만기까지 세후 ₩${won(interest.toMaturityNet)}` : `세후 ₩${won(interest.annualNet)}/년`}</div>}
-              {pnl && <div className={`text-[11px] ${pnl.profit >= 0 ? 'text-up' : 'text-down'}`}>{pnl.profit >= 0 ? '▲' : '▼'} {pnl.pct >= 0 ? '+' : ''}{pnl.pct.toFixed(2)}% ({symbolOf(a.currency)}{won(Math.abs(pnl.profit))})</div>}
+              {pnl && <div className={`text-[11px] ${pnl.profit >= 0 ? 'text-up' : 'text-down'}`}>{pnl.profit >= 0 ? '▲' : '▼'} {pnl.pct >= 0 ? '+' : ''}{pnl.pct.toFixed(2)}% (₩{won(Math.abs(pnl.profit))})</div>}
             </div>
             <div className="text-right shrink-0">
-              <div className="text-[14px] font-bold tnum">{foreign ? `${symbolOf(a.currency)}${won(a.amount)}` : won(a.amount)}</div>
-              {foreign && <div className="text-[11px] text-sub tnum">≈ ₩{won(krwValue(a))}</div>}
+              {a.extraBalances && a.extraBalances.length > 0 ? (
+                <>
+                  <div className="text-[14px] font-bold tnum">₩{won(krwValue(a))}</div>
+                  <div className="text-[11px] text-sub tnum">₩{won(a.amount)} + {a.extraBalances.map((b) => `${curSymbol(b.currency)}${money(b.amount, b.currency)}`).join(' + ')}</div>
+                </>
+              ) : foreign ? (
+                <>
+                  <div className="text-[14px] font-bold tnum">{curSymbol(a.currency)}{money(a.amount, a.currency)}</div>
+                  <div className="text-[11px] text-sub tnum">≈ ₩{won(krwValue(a))}</div>
+                </>
+              ) : (
+                <div className="text-[14px] font-bold tnum">{won(a.amount)}</div>
+              )}
             </div>
           </div>
           <button onClick={() => del(a)} className="text-sub hover:text-expense p-1 shrink-0" title="삭제"><X size={16} /></button>
@@ -237,8 +320,32 @@ export default function Assets() {
     <div>
       <PageHeader title="자산" />
 
+      {updateMode ? (
+        <div className="flex items-center justify-between gap-2 bg-mint-l text-mint-d rounded-[10px] px-3 py-2 mb-3 text-[12.5px] font-semibold">
+          <span>🔄 업데이트 중 · {updated.size}개 체크됨 <span className="font-normal text-sub">· 갱신한 항목 왼쪽 동그라미를 눌러 체크</span></span>
+          <button onClick={finishUpdate} className="shrink-0 bg-mint text-white rounded-lg px-3 py-1.5 text-[12px] font-bold hover:opacity-90">업데이트 완료</button>
+        </div>
+      ) : (
+        <div className="flex justify-end mb-2">
+          <button onClick={startUpdate} className="text-[12px] font-bold text-mint-d border border-line rounded-lg px-3 py-1.5 hover:bg-canvas flex items-center gap-1"><Check size={13} /> 업데이트 시작</button>
+        </div>
+      )}
+
       <Card>
-        <CardLabel>자산 구성 · 총 ₩{won(total)}</CardLabel>
+        {repayable > 0 ? (
+          <div className="flex items-end justify-between mb-2">
+            <div>
+              <div className="text-[11px] text-sub">받은 돈 포함 총자산</div>
+              <div className="text-[19px] font-extrabold tnum">₩{won(total)}</div>
+            </div>
+            <div className="text-right">
+              <div className="text-[11px] text-mint-d font-semibold">내 돈만 (받은 돈 제외)</div>
+              <div className="text-[19px] font-extrabold tnum text-mint-d">₩{won(myMoney)}</div>
+            </div>
+          </div>
+        ) : (
+          <CardLabel>자산 구성 · 총 ₩{won(total)}</CardLabel>
+        )}
         <div className="flex h-7 rounded-lg overflow-hidden mt-1">
           {byGroup.map((g) => (
             <div key={g.key} style={{ width: `${total ? (g.sum / total) * 100 : 0}%`, background: g.color }} className="flex items-center justify-center text-white text-[11px] font-bold" title={`${g.label} ${won(g.sum)}`}>
@@ -268,16 +375,19 @@ export default function Assets() {
         </div>
       )}
 
+      {/* 가족에게 받은 돈 (엄마·아빠 지원금) — 총자산엔 포함되지만 '내 돈만'과 구분 */}
+      <SupportSection profileId={profileId} supports={supports} />
+
       <Fab onClick={() => openEdit(undefined)} label="자산 추가" />
-      <AssetModal open={modal} onClose={() => setModal(false)} edit={edit} profileId={profileId} />
+      <AssetModal open={modal} onClose={() => setModal(false)} edit={edit} profileId={profileId} onSaved={markUpdated} />
     </div>
   )
 }
 
 interface Hit { display: string; store: string; name: string; sub: string }
 
-// 평가액 = 수량 × 현재가 (없으면 매입금액). 매입금액(principal)은 직접 입력
-const holdingValue = (qty: number, unit: number | undefined, buy: number) => (unit != null ? Math.round(qty * unit) : buy)
+// 평가액 = 수량 × 현재가 (없으면 매입금액). 원 미만 내림. 매입금액(principal)은 직접 입력
+const holdingValue = (qty: number, unit: number | undefined, buy: number) => (unit != null ? Math.floor(qty * unit) : buy)
 
 // 계좌형(IRP·연금저축펀드) 개별 종목 편집기 — 검색(국내 주식/ETF)→수량·매입금액 자동, 또는 이름·평가액 직접입력
 function HoldingEditor({ h, onChange, onRemove }: { h: Holding; onChange: (patch: Partial<Holding>) => void; onRemove: () => void }) {
@@ -299,9 +409,12 @@ function HoldingEditor({ h, onChange, onRemove }: { h: Holding; onChange: (patch
 
   async function pick(hit: Hit) {
     setQ(''); setHits([])
-    const price = (await getKrStockPrice(hit.store))?.price ?? null
+    const r = await getKrStockPrice(hit.store)
+    const price = r?.price ?? null
+    // 6자리 코드로 검색했으면 조회된 실제 종목명을 이름으로 (없으면 코드 그대로 — 나중에 직접 수정 가능)
+    const nm = /^\d{6}$/.test(hit.name) ? (r?.name || hit.name) : hit.name
     const qty = Number(h.quantity) || 0, buy = Number(h.principal) || 0
-    onChange({ name: hit.name, ticker: hit.store, live: 'stock', unitPrice: price ?? undefined, value: holdingValue(qty, price ?? undefined, buy) })
+    onChange({ name: nm, ticker: hit.store, live: 'stock', unitPrice: price ?? undefined, value: holdingValue(qty, price ?? undefined, buy) })
   }
 
   const qty = Number(h.quantity) || 0
@@ -313,15 +426,14 @@ function HoldingEditor({ h, onChange, onRemove }: { h: Holding; onChange: (patch
   return (
     <div className="border border-line rounded-[10px] p-2 mb-2">
       {searched ? (
-        <div className="flex items-center justify-between mb-1.5">
-          <div className="min-w-0">
-            <div className="text-[13px] font-semibold truncate">{h.name} <span className="text-[10px] text-sub font-normal">{h.ticker}</span></div>
-            <div className="text-[11px] text-mint-d">현재가 ₩{won(h.unitPrice ?? 0)}{h.unitPrice == null ? ' (조회 중)' : ''}</div>
+        <div className="mb-1.5">
+          <div className="flex items-center gap-1.5">
+            {/* 코드로 저장돼도 이름을 알아보기 쉽게 바꿀 수 있게 (예: 360750 → TIGER 미국S&P500) */}
+            <input value={h.name ?? ''} onChange={(e) => onChange({ name: e.target.value })} placeholder="종목 이름 (직접 수정 가능)" className={inputCls + ' !py-1.5 flex-1 min-w-0'} />
+            <button onClick={() => onChange({ ticker: undefined, live: undefined, unitPrice: undefined })} className="text-[11px] text-sub px-1.5 hover:text-ink shrink-0">변경</button>
+            <button onClick={onRemove} className="text-sub hover:text-expense p-1 shrink-0"><X size={15} /></button>
           </div>
-          <div className="flex items-center gap-1 shrink-0">
-            <button onClick={() => onChange({ ticker: undefined, live: undefined, unitPrice: undefined })} className="text-[11px] text-sub px-1.5 hover:text-ink">변경</button>
-            <button onClick={onRemove} className="text-sub hover:text-expense p-1"><X size={15} /></button>
-          </div>
+          <div className="text-[11px] text-mint-d mt-1">{h.ticker} · 현재가 ₩{won(h.unitPrice ?? 0)}{h.unitPrice == null ? ' (조회 중)' : ''}</div>
         </div>
       ) : (
         <div className="mb-1.5">
@@ -364,7 +476,7 @@ function HoldingEditor({ h, onChange, onRemove }: { h: Holding; onChange: (patch
   )
 }
 
-function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Asset; profileId: string }) {
+function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean; onClose: () => void; edit?: Asset; profileId: string; onSaved?: (id: string) => void }) {
   const [type, setType] = useState('checking')
   const [name, setName] = useState('')
   const [inst, setInst] = useState('')
@@ -373,6 +485,9 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [fxRate, setFxRate] = useState('')
   const [amount, setAmount] = useState<number | null>(null)
   const [principal, setPrincipal] = useState('') // 매입금액(총 투자금)
+  const [principalCcy, setPrincipalCcy] = useState('KRW') // 매입금액 통화 (원/달러 선택 — 해외주식·코인)
+  const [manual, setManual] = useState(false) // 시세연동 없이 직접입력(검색 안 되는 펀드 등)
+  const [extraBalances, setExtraBalances] = useState<ExtraBalance[]>([]) // 입출금 계좌 안 외화(원화+달러 동시)
   const [quantity, setQuantity] = useState('')
   const [ticker, setTicker] = useState('')
   const [rate, setRate] = useState('')
@@ -390,30 +505,38 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   const [hits, setHits] = useState<Hit[]>([])
   const [searching, setSearching] = useState(false)
   const [livePrice, setLivePrice] = useState<number | null>(null)
+  const [priceLoading, setPriceLoading] = useState(false) // 현재가 불러오는 중
 
+  const [pFxRate, setPFxRate] = useState('') // 매입금액 통화(달러)의 환율 — 코인을 달러로 산 경우 등
   const sub = subOf(type)
   const pensionInvest = !!sub.pension && PENSION_INVEST.includes(subLabel)
   const isInvest = !!sub.qty || pensionInvest
-  const showSearch = sub.live === 'coin' || (sub.live === 'stock' && (market === 'us' || market === 'kr'))
+  // 매입금액 통화를 원/달러로 고를 수 있는 자산 (해외주식·코인)
+  const canPickPrincipalCcy = !pensionInvest && (sub.live === 'coin' || (sub.live === 'stock' && market === 'us'))
+  const showSearch = !manual && (sub.live === 'coin' || (sub.live === 'stock' && (market === 'us' || market === 'kr')))
   const foreign = currency !== 'KRW'
 
   useEffect(() => {
     if (!open) return
-    setQ(''); setHits([]); setLivePrice(null)
+    // 기존 자산은 마지막 저장된 시세로 먼저 채움 → 시세 조회 일시 실패해도 값 유지(수동모드로 안 빠짐)
+    setQ(''); setHits([]); setLivePrice(edit?.unitPrice ?? null)
     if (edit) {
       setType(edit.type); setName(edit.name); setInst(edit.institution ?? '')
       setMarket(edit.market ?? 'kr'); setCurrency(edit.currency ?? 'KRW'); setFxRate(edit.fxRate ? String(edit.fxRate) : '')
       setAmount(edit.amount); setTicker(edit.ticker ?? '')
       // 매입금액 = 저장된 principal, 없으면 구버전(수량×평단가)에서 환산
-      setPrincipal(edit.principal != null ? String(edit.principal) : (edit.quantity && edit.avgPrice ? String(Math.round(edit.quantity * edit.avgPrice)) : ''))
-      setQuantity(edit.quantity != null ? String(edit.quantity) : '')
+      setPrincipal(edit.principal != null ? numStr(edit.principal) : (edit.quantity && edit.avgPrice ? String(Math.round(edit.quantity * edit.avgPrice)) : ''))
+      setPrincipalCcy(edit.principalCurrency ?? (edit.currency && edit.currency !== 'KRW' ? edit.currency : 'KRW'))
+      setManual(!!edit.manual)
+      setExtraBalances(edit.extraBalances ?? [])
+      setQuantity(edit.quantity != null ? numStr(edit.quantity) : '')
       setRate(edit.rate != null ? String(edit.rate) : ''); setTaxType(edit.taxType ?? 'normal'); setStartDate(edit.startDate ?? ''); setMaturity(edit.maturity ?? ''); setNoMaturity(!edit.maturity && !!edit.rate)
       setCashKind(edit.type === 'checking' && edit.subLabel === '현금' ? 'cash' : 'bank')
       setSavingKind(edit.savingKind ?? 'deposit'); setSubLabel(edit.subLabel ?? '연금보험'); setHoldings(edit.holdings ?? []); setCash(edit.cash ?? null); setArchived(!!edit.archived)
     } else {
       setType('checking'); setName(''); setInst(''); setMarket('kr')
       setCurrency('KRW'); setFxRate(''); setAmount(null); setTicker('')
-      setPrincipal(''); setQuantity('')
+      setPrincipal(''); setPrincipalCcy('KRW'); setManual(false); setExtraBalances([]); setQuantity('')
       setRate(''); setTaxType('normal'); setStartDate(''); setMaturity(''); setNoMaturity(false); setCashKind('bank'); setSavingKind('deposit'); setSubLabel('연금보험'); setHoldings([]); setCash(null); setArchived(false)
     }
   }, [open, edit])
@@ -426,18 +549,27 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
     return () => { cancel = true }
   }, [currency, open])
 
+  // 매입금액 통화(달러 등) 환율 — 코인을 달러로 산 경우처럼 자산 통화와 다를 때
+  useEffect(() => {
+    if (!open || principalCcy === 'KRW' || principalCcy === currency) return
+    let cancel = false
+    fetchFxRate(principalCcy).then((r) => { if (!cancel && r) setPFxRate(String(Math.round(r * 100) / 100)) })
+    return () => { cancel = true }
+  }, [principalCcy, currency, open])
+
   // 저장한 종목을 수정으로 다시 열 때: 티커로 현재가 자동 재조회 (검색 안 해도 시세 반영)
   useEffect(() => {
     if (!open || !edit || !edit.ticker) return
     const s = subOf(edit.type)
     if (!s.live || s.live === 'gold') return
     let cancel = false
+    setPriceLoading(true)
     ;(async () => {
       let p: number | null = null
       if (s.live === 'coin') p = await getCoinPriceKRW(edit.ticker!)
       else if (edit.market === 'us') p = await getStockPrice(edit.ticker!)
       else { const r = await getKrStockPrice(edit.ticker!); p = r ? r.price : null }
-      if (!cancel && p != null) setLivePrice(p)
+      if (!cancel) { if (p != null) setLivePrice(p); setPriceLoading(false) }
     })()
     return () => { cancel = true }
   }, [open, edit])
@@ -468,36 +600,70 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
   }, [q, showSearch, sub.live])
 
   async function pick(h: Hit) {
-    setName(h.name); setTicker(h.store); setQ(''); setHits([])
-    if (sub.live === 'coin') { setCurrency('KRW'); setLivePrice(await getCoinPriceKRW(h.store)) }
-    else if (market === 'kr') { setCurrency('KRW'); const r = await getKrStockPrice(h.store); setLivePrice(r ? r.price : null); if (r?.name && /^\d{6}$/.test(h.name)) setName(r.name) }
-    else { setMarket('us'); setCurrency('USD'); setLivePrice(await getStockPrice(h.store)) }
+    setName(h.name); setTicker(h.store); setQ(''); setHits([]); setPriceLoading(true)
+    try {
+      if (sub.live === 'coin') { setCurrency('KRW'); setLivePrice(await getCoinPriceKRW(h.store)) }
+      else if (market === 'kr') { setCurrency('KRW'); const r = await getKrStockPrice(h.store); setLivePrice(r ? r.price : null); if (r?.name && /^\d{6}$/.test(h.name)) setName(r.name) }
+      else { setMarket('us'); setCurrency('USD'); setLivePrice(await getStockPrice(h.store)) }
+    } finally { setPriceLoading(false) }
   }
 
-  const instList = sub.inst === 'bank' ? BANKS : sub.inst === 'securities' ? SECURITIES : sub.inst === 'exchange' ? EXCHANGES : sub.inst === 'both' ? [...BANKS, ...SECURITIES] : null
+  // 해외주식: 검색에 없는 종목을 티커로 직접 추가 (BRK.B 등). 시세 못 불러오면 평가금액 직접입력으로 전환
+  async function pickUsTicker(raw: string) {
+    const sym = raw.trim().toUpperCase()
+    if (!sym) return
+    setTicker(sym); if (!name.trim()) setName(sym); setQ(''); setHits([])
+    setMarket('us'); setCurrency('USD'); setPriceLoading(true)
+    try { setLivePrice(await getStockPrice(sym)) } finally { setPriceLoading(false) }
+  }
 
-  // 투자 계산
-  // 시세연동 종목(주식/ETF/코인/금): 매입금액 입력 · 평가 = 수량×현재가 · 수익 = 평가−매입금액
-  const useLive = !!sub.live
+  const instList = sub.inst === 'bank' ? BANKS : sub.inst === 'securities' ? SECURITIES : sub.inst === 'exchange' ? EXCHANGES : sub.inst === 'both' ? [...BANKS, ...SECURITIES] : sub.pension ? PENSION_PROVIDERS : null
+
+  // 해외/국내 '주식'인데 현재가를 못 불러온 경우(BRK.B·펀드 등)만 평가금액 직접입력으로 전환.
+  // 코인은 CoinGecko 일시 실패(레이트리밋)를 상폐로 오인하면 안 되므로 자동전환 제외.
+  const priceUnavailable = !manual && sub.live === 'stock' && !!ticker.trim() && livePrice == null && !priceLoading
+  const manualEntry = manual || priceUnavailable // 직접 평가금액 입력 모드
+  // 투자 계산 — 손익은 모두 '원화' 기준. 평가액은 자산 통화(달러 등) 소수 유지.
+  const useLive = !!sub.live && !manualEntry
   const qtyNum = Number(quantity) || 0
   const principalNum = Number(String(principal).replace(/,/g, '')) || 0
-  const investPrincipal = principalNum // 매입금액(총 투자금)
-  const investValue = useLive ? (livePrice != null ? Math.round(qtyNum * livePrice) : principalNum) : (amount ?? 0)
-  const investProfit = investValue - investPrincipal
-  const investPct = investPrincipal > 0 ? (investProfit / investPrincipal) * 100 : 0
   const fxNum = Number(fxRate) || 0
-  const investKrw = foreign && fxNum ? Math.round(investValue * fxNum) : investValue
+  const round2 = (n: number) => (currency === 'USD' ? Math.floor(n * 100) / 100 : Math.floor(n))
+  const toKrwLocal = (v: number, ccy: string, fx: number) => (ccy && ccy !== 'KRW' ? Math.floor(v * fx) : v)
+  // 직접입력 모드에선 원금·평가금액을 '자산 통화(currency)'로 취급 (달러 펀드도 가능)
+  const effPrincipalCcy = manualEntry ? currency : principalCcy
+  // 평가액 (자산 통화). 직접입력이면 입력한 평가금액, 아니면 수량×현재가
+  const investValueNative = manualEntry ? (amount ?? 0) : (useLive && livePrice != null ? round2(qtyNum * livePrice) : 0)
+  const investValueKrw = toKrwLocal(investValueNative, currency, fxNum)
+  // 매입금액 → 원화 (매입 통화 기준)
+  const pFxNum = effPrincipalCcy === currency ? fxNum : (Number(pFxRate) || 0)
+  const principalKrwVal = toKrwLocal(principalNum, effPrincipalCcy, pFxNum)
+  const investProfit = investValueKrw - principalKrwVal // 원화 손익
+  const investPct = principalKrwVal > 0 ? (investProfit / principalKrwVal) * 100 : 0
 
   // 계좌형(IRP·연금저축펀드) 개별 종목
   const addHolding = () => setHoldings((h) => [...h, { id: uid(), name: '', principal: 0, value: 0 }])
   const updHolding = (id: string, patch: Partial<Holding>) => setHoldings((h) => h.map((x) => (x.id === id ? { ...x, ...patch } : x)))
   const delHolding = (id: string) => setHoldings((h) => h.filter((x) => x.id !== id))
+
+  // 계좌 안 추가 외화 잔액 (원화+달러 동시)
+  const updExtra = (id: string, patch: Partial<ExtraBalance>) => setExtraBalances((x) => x.map((b) => (b.id === id ? { ...b, ...patch } : b)))
+  const delExtra = (id: string) => setExtraBalances((x) => x.filter((b) => b.id !== id))
+  const changeExtraCcy = (id: string, ccy: string) => {
+    updExtra(id, { currency: ccy, fxRate: undefined })
+    fetchFxRate(ccy).then((r) => { if (r) updExtra(id, { fxRate: Math.round(r * 100) / 100 }) })
+  }
+  const addExtra = () => {
+    const id = uid()
+    setExtraBalances((x) => [...x, { id, currency: 'USD', amount: 0 }])
+    fetchFxRate('USD').then((r) => { if (r) updExtra(id, { fxRate: Math.round(r * 100) / 100 }) })
+  }
   const hSumPrincipal = holdings.reduce((s, h) => s + (Number(h.principal) || 0), 0)
   const hSumValue = holdings.reduce((s, h) => s + (Number(h.value) || 0), 0)
   const hProfit = hSumValue - hSumPrincipal
   const hPct = hSumPrincipal > 0 ? (hProfit / hSumPrincipal) * 100 : 0
 
-  const krwPreview = foreign && amount && fxNum ? Math.round(amount * fxNum) : null
+  const krwPreview = foreign && amount && fxNum ? Math.floor(amount * fxNum) : null
   const bankChecking = type === 'checking' && cashKind === 'bank'
   const showRate = !!sub.rate || bankChecking // 예적금 or 입출금(통장)
   const interestObj = showRate && Number(rate) > 0 && amount
@@ -532,16 +698,25 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
           ticker: h.ticker || undefined, live: h.live, quantity: h.quantity, unitPrice: h.unitPrice,
         }))
       : undefined
-    const amt = pensionInvest ? (hSumValue + (cash ?? 0)) : (useLive ? investValue : (amount ?? 0))
+    const amt = pensionInvest ? (hSumValue + (cash ?? 0)) : (useLive ? investValueNative : (amount ?? 0))
     const liveQty = !pensionInvest && useLive && qtyNum > 0
+    // 매입금액은 '입력한 통화 그대로' 저장 (달러 매수는 달러로) + 원화 환산용 환율(principalFx)만 별도 저장
+    const principalToStore = pensionInvest ? (hSumPrincipal || undefined) : (isInvest && principalNum > 0 ? principalNum : undefined)
+    // 자산 통화 (직접입력 펀드도 달러 등 가능)
+    const assetCurrency = currency !== 'KRW' ? currency : undefined
+    const extras = type === 'checking' ? extraBalances.filter((b) => b.currency && (Number(b.amount) || 0) > 0) : []
     const a: Asset = {
       id: edit?.id ?? uid(), profileId, type, name: finalName,
       amount: amt,
-      currency: currency === 'KRW' ? undefined : currency,
-      fxRate: foreign && fxNum ? fxNum : undefined,
+      currency: assetCurrency,
+      fxRate: assetCurrency && fxNum ? fxNum : undefined,
       institution: inst.trim() || undefined,
       market: sub.live === 'stock' ? market : undefined,
-      principal: pensionInvest ? (hSumPrincipal || undefined) : (isInvest && principalNum > 0 ? principalNum : undefined),
+      principal: principalToStore,
+      principalCurrency: principalToStore != null && !pensionInvest ? effPrincipalCcy : undefined,
+      principalFx: principalToStore != null && !pensionInvest && effPrincipalCcy !== 'KRW' && effPrincipalCcy !== assetCurrency ? (pFxNum || undefined) : undefined,
+      manual: manualEntry && isInvest && !pensionInvest ? true : undefined,
+      extraBalances: extras.length ? extras : undefined,
       holdings: hs && hs.length ? hs : undefined,
       cash: pensionInvest && cash ? cash : undefined,
       quantity: liveQty ? qtyNum : undefined,
@@ -557,6 +732,7 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       updatedAt: new Date().toISOString(),
     }
     await repo.upsertAsset(a)
+    onSaved?.(a.id)
     onClose()
   }
 
@@ -584,7 +760,7 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       {showSearch && (
         <Field label={sub.live === 'coin' ? '코인 검색' : market === 'kr' ? '종목 검색 (국내)' : '종목 검색 (해외)'}>
           <div>
-            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={sub.live === 'coin' ? 'BTC, ETH, bitcoin … (영문)' : market === 'kr' ? '삼성전자, 069500 …' : 'apple, AAPL …'} className={inputCls} />
+            <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={sub.live === 'coin' ? 'BTC, ETH, bitcoin … (영문)' : market === 'kr' ? '삼성전자, 069500 …' : 'apple, AAPL, BRK.B …'} className={inputCls} />
             {q.trim() && (
               <div className="mt-1 bg-surface border border-line rounded-[10px] shadow-sm max-h-56 overflow-auto">
                 {searching && <div className="px-3 py-2 text-[12px] text-sub">검색 중…</div>}
@@ -594,14 +770,29 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
                     <div className="text-[11px] text-sub truncate">{h.sub}</div>
                   </button>
                 ))}
-                {!searching && hits.length === 0 && <div className="px-3 py-2 text-[12px] text-sub">결과 없음</div>}
+                {/* 해외주식: 검색에 없어도 티커를 그대로 입력해 추가 (BRK.B 등) */}
+                {!searching && sub.live === 'stock' && market === 'us' && (
+                  <button onClick={() => pickUsTicker(q)} className="w-full text-left px-3 py-2 hover:bg-canvas border-t border-line bg-mint-l/40">
+                    <div className="text-[13px] font-semibold text-mint-d">＋ ‘{q.trim().toUpperCase()}’ 티커로 바로 추가</div>
+                    <div className="text-[11px] text-sub">검색에 안 나오는 종목은 티커(BRK.B 등)를 그대로 넣으세요</div>
+                  </button>
+                )}
+                {!searching && hits.length === 0 && sub.live !== 'stock' && <div className="px-3 py-2 text-[12px] text-sub">결과 없음</div>}
               </div>
             )}
           </div>
-          {livePrice != null && <div className="text-[12px] text-mint-d mt-1">✓ {ticker} 현재가 {sub.live === 'coin' || market === 'kr' ? `₩${won(livePrice)}` : `$${livePrice}`}</div>}
+          {livePrice != null && <div className="text-[12px] text-mint-d mt-1">✓ {ticker} 현재가 {sub.live === 'coin' || market === 'kr' ? `₩${smallPrice(livePrice)}` : `$${livePrice}`}</div>}
           {sub.live === 'coin' && <div className="text-[11px] text-sub mt-1">※ 영문 이름·티커로 검색 (한글 미지원). 예: BTC, ETH, SOL</div>}
           {market === 'kr' && <div className="text-[11px] text-sub mt-1">※ 인기 종목은 이름으로, 나머지는 6자리 종목코드로 검색하세요.</div>}
         </Field>
+      )}
+
+      {/* 검색이 안 되는 펀드·종목은 직접 입력 (시세연동 없이 평가액 수동) */}
+      {sub.live === 'stock' && (
+        <label className="flex items-center gap-2 text-[12.5px] text-sub -mt-1 mb-2 cursor-pointer">
+          <input type="checkbox" checked={manual} onChange={(e) => { const on = e.target.checked; setManual(on); if (on) { setTicker(''); setLivePrice(null); setQ(''); if (market === 'us') setCurrency('USD') } }} />
+          검색이 안 되는 펀드·종목이에요 (이름·평가액 직접 입력)
+        </label>
       )}
 
       {sub.key !== 'gold' && (
@@ -637,8 +828,8 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
       )}
 
       {instList && !(type === 'checking' && cashKind === 'cash') && (
-        <Field label={sub.inst === 'bank' ? '은행' : sub.inst === 'securities' ? '증권사' : sub.inst === 'exchange' ? '거래소' : '기관 (선택)'}>
-          <Autocomplete value={inst} onChange={setInst} options={instList} placeholder="검색해서 선택 (없으면 그냥 입력)" />
+        <Field label={sub.inst === 'bank' ? '은행' : sub.inst === 'securities' ? '증권사' : sub.inst === 'exchange' ? '거래소' : sub.pension ? '가입 기관 (증권사·보험사·은행)' : '기관 (선택)'}>
+          <Autocomplete value={inst} onChange={setInst} options={instList} placeholder={sub.pension ? '예: 삼성생명, 한국투자증권' : '검색해서 선택 (없으면 그냥 입력)'} />
         </Field>
       )}
 
@@ -664,13 +855,6 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
         </>
       ) : isInvest ? (
         <>
-          {sub.live === 'stock' && market === 'us' && (
-            <Field label="통화">
-              <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
-                {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
-              </select>
-            </Field>
-          )}
           {useLive ? (
             <>
               {sub.key === 'gold' && (
@@ -679,25 +863,57 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
                   <span className="text-[11px] text-sub"> · KRX 국내 금값</span>
                 </div>
               )}
+              {/* 매입금액 통화 선택 (해외주식·코인: 원/달러) */}
+              {canPickPrincipalCcy && (
+                <Field label="매입금액 통화">
+                  <div className="flex gap-1.5">
+                    {(['KRW', 'USD'] as const).map((c) => (
+                      <button key={c} onClick={() => setPrincipalCcy(c)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${principalCcy === c ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{c === 'KRW' ? '원 (₩)' : '달러 ($)'}</button>
+                    ))}
+                  </div>
+                  <div className="text-[11px] text-sub mt-1">{principalCcy === 'KRW' ? '실제로 낸 원화 금액을 넣으세요 (예: 토스로 40만원 매수)' : '달러로 매수했다면 달러 금액 (예: 바이낸스)'}</div>
+                </Field>
+              )}
               <div className="grid grid-cols-2 gap-3">
-                <Field label={sub.key === 'gold' ? '보유 수량 (g)' : '보유 수량'}><input type="number" value={quantity} onChange={(e) => setQuantity(e.target.value)} onWheel={(e) => e.currentTarget.blur()} placeholder={sub.key === 'gold' ? '예: 3.75' : '예: 10'} className={inputCls + ' text-right tnum'} /></Field>
-                <Field label={`매입금액 (${foreign ? currency : '원'})`}><DecimalInput value={principal} onChange={setPrincipal} placeholder="총 투자한 금액" /></Field>
+                <Field label={sub.key === 'gold' ? '보유 수량 (g)' : '보유 수량'}><DecimalInput value={quantity} onChange={setQuantity} placeholder={sub.key === 'gold' ? '예: 3.75' : '예: 10'} /></Field>
+                <Field label={`매입금액 (${principalCcy === 'KRW' ? '원' : principalCcy})`}><DecimalInput value={principal} onChange={setPrincipal} placeholder="총 투자한 금액" /></Field>
               </div>
               {qtyNum > 0 && principalNum > 0 && (
                 <div className="text-[12.5px] bg-canvas rounded-lg px-3 py-2 mb-2">
-                  매입 {symbolOf(currency)}{won(investPrincipal)} → 평가 <b>{symbolOf(currency)}{won(investValue)}</b>{foreign && <span className="text-sub"> ≈ ₩{won(investKrw)}</span>}
-                  <span className={investProfit >= 0 ? ' text-up' : ' text-down'}> · 수익 {investProfit >= 0 ? '+' : ''}{symbolOf(currency)}{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(2)}%)</span>
+                  평가 <b>₩{won(investValueKrw)}</b>{foreign && livePrice != null && <span className="text-sub"> ({curSymbol(currency)}{money(investValueNative, currency)})</span>} · 매입 ₩{won(principalKrwVal)}
+                  <span className={investProfit >= 0 ? ' text-up' : ' text-down'}> · 수익 {investProfit >= 0 ? '+' : ''}₩{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(2)}%)</span>
                   {livePrice == null && <div className="text-[11px] text-sub mt-0.5">※ 현재가 불러오는 중 — 위에서 종목을 검색해 선택하면 시세가 반영돼요{sub.key === 'gold' ? ' (금은 자동)' : ''}</div>}
                 </div>
               )}
             </>
           ) : (
             <>
-              <Field label="원금 (투자한 금액)"><AmountInput value={principal === '' ? null : Number(principal)} onChange={(v) => setPrincipal(v == null ? '' : String(v))} /></Field>
-              <Field label="현재 평가금액"><AmountInput value={amount} onChange={setAmount} /></Field>
+              <div className="text-[12px] text-sub bg-mint-l/40 rounded-lg px-3 py-2 mb-2">
+                {priceUnavailable
+                  ? <>ℹ️ ‘{ticker}’ 현재가를 자동으로 불러올 수 없어요. <b className="text-ink">원금·평가금액을 직접 넣으면</b> 그대로 반영하고 <b className="text-ink">수동</b> 표시를 달아둘게요.</>
+                  : <>✍️ 직접 입력 모드 — 시세 자동연동 없이 원금·평가금액을 직접 넣어요 (펀드 등). <b className="text-ink">수동</b>으로 표시돼요.</>}
+              </div>
+              <Field label="통화">
+                <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
+                  {CURRENCIES.map((c) => <option key={c.code} value={c.code}>{c.label}</option>)}
+                </select>
+              </Field>
+              <Field label={`원금 (투자한 금액, ${foreign ? currency : '원'})`}>
+                {foreign
+                  ? <DecimalInput value={principal} onChange={setPrincipal} placeholder="총 투자한 금액" />
+                  : <AmountInput value={principal === '' ? null : Number(principal)} onChange={(v) => setPrincipal(v == null ? '' : String(v))} />}
+              </Field>
+              <Field label={`현재 평가금액 (${foreign ? currency : '원'})`}>
+                {foreign
+                  ? <DecimalInput value={amount == null ? '' : numStr(amount)} onChange={(v) => setAmount(v === '' ? null : Number(v))} placeholder="현재 평가금액" />
+                  : <AmountInput value={amount} onChange={setAmount} />}
+              </Field>
+              {foreign && (
+                <div className="text-[12px] text-mint-d -mt-1 mb-2">💱 평가 ≈ ₩{won(investValueKrw)} <span className="text-sub">(환율 자동{fxRate ? ` ${fxRate}` : ''})</span></div>
+              )}
               {(principalNum > 0 || (amount ?? 0) > 0) && (
                 <div className="text-[12.5px] bg-canvas rounded-lg px-3 py-2 mb-2">
-                  수익 <b className={investProfit >= 0 ? 'text-up' : 'text-down'}>{investProfit >= 0 ? '+' : ''}₩{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(2)}%)</b>
+                  {foreign && <>평가 <b>₩{won(investValueKrw)}</b> · 매입 ₩{won(principalKrwVal)} · </>}수익 <b className={investProfit >= 0 ? 'text-up' : 'text-down'}>{investProfit >= 0 ? '+' : ''}₩{won(investProfit)} ({investPct >= 0 ? '+' : ''}{investPct.toFixed(2)}%)</b>
                 </div>
               )}
             </>
@@ -714,10 +930,33 @@ function AssetModal({ open, onClose, edit, profileId }: { open: boolean; onClose
                 </select>
               </Field>
             )}
-            <Field label={sub.rate ? '현재 잔액 (원)' : `금액 (${foreign ? currency : '원'})`}><AmountInput value={amount} onChange={setAmount} /></Field>
+            <Field label={sub.rate ? '현재 잔액 (원)' : `금액 (${foreign ? currency : '원'})`}>
+              {foreign
+                ? <DecimalInput value={amount == null ? '' : String(amount)} onChange={(v) => setAmount(v === '' ? null : Number(v))} placeholder="소수점까지 (예: 20.50)" />
+                : <AmountInput value={amount} onChange={setAmount} />}
+            </Field>
           </div>
           {foreign && (
             <div className="text-[12px] text-mint-d -mt-1 mb-2">💱 원화 환산 ≈ ₩{krwPreview != null ? won(krwPreview) : '…'} <span className="text-sub">(환율 자동{fxRate ? ` ${fxRate}` : ''})</span></div>
+          )}
+          {/* 한 계좌에 원화 + 외화가 함께 있을 때 (예: 토스증권 100원 + 20달러) — 금리보다 위 */}
+          {type === 'checking' && (
+            <div className="mt-1 mb-2">
+              <div className="flex items-center justify-between mb-1.5">
+                <span className="text-[12px] font-semibold text-sub">외화도 함께 있어요 (선택)</span>
+                <button onClick={addExtra} className="text-[12px] font-bold text-mint-d flex items-center gap-1"><Plus size={13} /> 외화 추가</button>
+              </div>
+              {extraBalances.map((b) => (
+                <div key={b.id} className="flex items-center gap-1.5 mb-1.5">
+                  <select value={b.currency} onChange={(e) => changeExtraCcy(b.id, e.target.value)} className={inputCls + ' !w-24 !py-1.5'}>
+                    {CURRENCIES.filter((c) => c.code !== 'KRW').map((c) => <option key={c.code} value={c.code}>{c.code}</option>)}
+                  </select>
+                  <div className="flex-1"><DecimalInput value={b.amount ? String(b.amount) : ''} onChange={(v) => updExtra(b.id, { amount: v === '' ? 0 : Number(v) })} placeholder="외화 금액" /></div>
+                  <span className="text-[11px] text-sub tnum w-24 text-right shrink-0">≈ ₩{won(Math.floor((b.fxRate ?? 0) * (Number(b.amount) || 0)))}</span>
+                  <button onClick={() => delExtra(b.id)} className="text-sub hover:text-expense p-1 shrink-0"><X size={15} /></button>
+                </div>
+              ))}
+            </div>
           )}
           {bankChecking && (
             <>
