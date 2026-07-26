@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { useLiveQuery } from 'dexie-react-hooks'
-import { X, Plus, ChevronDown, Check } from 'lucide-react'
+import { X, Plus, ChevronDown, ChevronLeft, ChevronRight, Check, History } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { useCoinSync } from '../hooks/useCoinSync'
@@ -39,10 +39,12 @@ const DGROUPS: DGroup[] = [
 ]
 // 주식·ETF 블럭 안 소분류 순서 (국내주식→해외주식→국내ETF→해외ETF)
 const STOCK_SUB_ORDER = ['kr_stock', 'us_stock', 'kr_etf', 'us_etf']
+// 자산 페이지 표시는 '실제 상품' 기준(상장 시장). investClass는 투자 페이지 배분에만 영향.
 const stockSub = (a: Asset) => `${a.market === 'us' ? 'us' : 'kr'}_${a.type === 'etf' ? 'etf' : 'stock'}`
 const stockSubLabel = (sub: string) => ({ kr_stock: '국내주식', us_stock: '해외주식', kr_etf: '국내 ETF', us_etf: '해외 ETF' } as Record<string, string>)[sub] ?? sub
 
 // 자산 → 표시 그룹 키
+// 자산 페이지 표시 그룹은 '실제 상품' 기준. (investClass 수동 지정은 투자 페이지 배분에만 반영)
 function dgroupOf(a: Asset): string {
   const g = groupOf(a.type)
   if (g !== 'invest') return g
@@ -109,6 +111,7 @@ export default function Assets() {
   const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
   const [modal, setModal] = useState(false)
   const [edit, setEdit] = useState<Asset | undefined>()
+  const [snapOpen, setSnapOpen] = useState(false) // 지난 달 보기 모달
   // 그룹 접힘 상태(브라우저 기억) · 그룹별 '숨김 펼치기'(세션)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(() => {
     try { return JSON.parse(localStorage.getItem(COLLAPSE_KEY) || '{}') } catch { return {} }
@@ -326,7 +329,8 @@ export default function Assets() {
           <button onClick={finishUpdate} className="shrink-0 bg-mint text-white rounded-lg px-3 py-1.5 text-[12px] font-bold hover:opacity-90">업데이트 완료</button>
         </div>
       ) : (
-        <div className="flex justify-end mb-2">
+        <div className="flex justify-end gap-2 mb-2">
+          <button onClick={() => setSnapOpen(true)} className="text-[12px] font-bold text-sub border border-line rounded-lg px-3 py-1.5 hover:bg-canvas flex items-center gap-1"><History size={13} /> 지난 달 보기</button>
           <button onClick={startUpdate} className="text-[12px] font-bold text-mint-d border border-line rounded-lg px-3 py-1.5 hover:bg-canvas flex items-center gap-1"><Check size={13} /> 업데이트 시작</button>
         </div>
       )}
@@ -378,9 +382,104 @@ export default function Assets() {
       {/* 가족에게 받은 돈 (엄마·아빠 지원금) — 총자산엔 포함되지만 '내 돈만'과 구분 */}
       <SupportSection profileId={profileId} supports={supports} />
 
+      <SnapshotModal open={snapOpen} onClose={() => setSnapOpen(false)} profileId={profileId} />
+
       <Fab onClick={() => openEdit(undefined)} label="자산 추가" />
       <AssetModal open={modal} onClose={() => setModal(false)} edit={edit} profileId={profileId} onSaved={markUpdated} />
     </div>
+  )
+}
+
+// yyyy-mm → "2026년 7월"
+const monthKo = (m: string) => { const [y, mo] = m.split('-'); return `${y}년 ${Number(mo)}월` }
+
+// 📅 지난 달 자산 스냅샷 보기 — 그 달 마지막 접속 시점의 자산 구성을 그대로(값 고정) 보여줌
+function SnapshotModal({ open, onClose, profileId }: { open: boolean; onClose: () => void; profileId: string }) {
+  const snaps = useLiveQuery(() => (profileId ? repo.listAssetSnapshots(profileId) : []), [profileId, open], [])
+  const curMonth = todayISO().slice(0, 7)
+  const past = (snaps ?? []).filter((s) => s.month < curMonth) // 이번 달은 실시간 페이지에서 보면 되니 과거만 (최신 월 먼저)
+  const [month, setMonth] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(false) // 월 점프 드롭다운
+  const [filter, setFilter] = useState('')
+  useEffect(() => { if (open) { setMonth(past[0]?.month ?? ''); setPickerOpen(false) } }, [open, past.length]) // eslint-disable-line react-hooks/exhaustive-deps
+  // 좌우 화살표로 저장된 달 사이 이동 (past는 최신 먼저 정렬). ‹=더 과거, ›=최신 방향
+  const idx = past.findIndex((s) => s.month === month)
+  const canOlder = idx >= 0 && idx < past.length - 1
+  const canNewer = idx > 0
+  const snap = past.find((s) => s.month === month)
+  const jumpList = past.filter((s) => !filter.trim() || monthKo(s.month).includes(filter.trim()) || s.month.includes(filter.trim()))
+
+  const items = (snap?.assets ?? []).filter(countsToTotal)
+  const total = items.reduce((s, a) => s + krwValue(a), 0)
+  const groups = DGROUPS
+    .map((g) => {
+      const gi = items.filter((a) => dgroupOf(a) === g.key).sort((a, b) => krwValue(b) - krwValue(a))
+      return { ...g, items: gi, sum: gi.reduce((s, a) => s + krwValue(a), 0) }
+    })
+    .filter((g) => g.items.length > 0)
+
+  return (
+    <Modal open={open} onClose={onClose} title="지난 달 자산 보기">
+      {past.length === 0 ? (
+        <div className="text-center text-sub text-[13px] py-8 leading-relaxed">
+          아직 지난 달 스냅샷이 없어요.<br />매달 한 번씩 접속하면 그 달 자산 내역이 자동 저장돼서,<br /><b>다음 달부터</b> 여기서 지난 달 모습을 볼 수 있어요.
+        </div>
+      ) : (
+        <>
+          {/* 좌우 화살표로 인접 달 이동 · 가운데 이름을 누르면 아무 달로 점프 */}
+          <div className="flex items-center justify-center gap-5 mb-3">
+            <button onClick={() => canOlder && setMonth(past[idx + 1].month)} disabled={!canOlder} className="p-1.5 rounded-lg text-ink hover:bg-canvas disabled:opacity-25 disabled:hover:bg-transparent"><ChevronLeft size={20} /></button>
+            <div className="relative">
+              <button onClick={() => { setPickerOpen((o) => !o); setFilter('') }} className="text-[15px] font-bold min-w-[104px] text-center flex items-center justify-center gap-1 hover:text-mint-d">
+                {month ? monthKo(month) : ''}<ChevronDown size={15} className="text-sub" />
+              </button>
+              {pickerOpen && (
+                <div className="absolute z-20 top-full mt-1 left-1/2 -translate-x-1/2 w-[190px] bg-surface border border-line rounded-xl shadow-lg p-2">
+                  <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="연도·월 검색 (예: 2025)" autoFocus className={inputCls + ' !py-1.5 text-[12px] mb-1.5'} />
+                  <div className="max-h-56 overflow-auto">
+                    {jumpList.length === 0 ? (
+                      <div className="text-[12px] text-sub text-center py-3">없음</div>
+                    ) : jumpList.map((s) => (
+                      <button key={s.month} onClick={() => { setMonth(s.month); setPickerOpen(false) }} className={`w-full text-left px-2.5 py-1.5 rounded-lg text-[13px] ${s.month === month ? 'bg-mint text-white font-bold' : 'hover:bg-canvas'}`}>{monthKo(s.month)}</button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+            <button onClick={() => canNewer && setMonth(past[idx - 1].month)} disabled={!canNewer} className="p-1.5 rounded-lg text-ink hover:bg-canvas disabled:opacity-25 disabled:hover:bg-transparent"><ChevronRight size={20} /></button>
+          </div>
+
+          {snap && (
+            <>
+              <div className="bg-canvas rounded-xl px-3.5 py-3 mb-3">
+                <div className="text-[11px] text-sub">{monthKo(snap.month)} 총자산 <span className="text-sub/70">· {snap.updatedAt.slice(5, 10).replace('-', '/')} 마지막 저장 기준</span></div>
+                <div className="text-[19px] font-extrabold tnum">₩{won(total)}</div>
+                <div className="text-[12px] text-mint-d font-semibold mt-0.5">내 돈만 ₩{won(snap.netWorth)}</div>
+              </div>
+
+              {groups.map((g) => (
+                <div key={g.key} className="mb-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[12.5px] font-bold">{g.emoji} {g.label}</span>
+                    <span className="text-[12px] font-bold tnum text-sub">₩{won(g.sum)}</span>
+                  </div>
+                  {g.items.map((a) => (
+                    <div key={a.id} className="flex items-center justify-between py-1.5 border-b border-line last:border-0">
+                      <div className="min-w-0 pr-2">
+                        <span className="text-[13px] font-semibold truncate">{a.name}</span>
+                        {a.institution && <span className="text-[11px] text-sub ml-1.5">{a.institution}</span>}
+                      </div>
+                      <span className="text-[13px] font-bold tnum shrink-0">₩{won(krwValue(a))}</span>
+                    </div>
+                  ))}
+                </div>
+              ))}
+              <div className="text-[11px] text-sub mt-1 leading-relaxed">💡 값은 저장 시점으로 고정돼 있어요(당시 시세·환율 기준).</div>
+            </>
+          )}
+        </>
+      )}
+    </Modal>
   )
 }
 
@@ -472,6 +571,14 @@ function HoldingEditor({ h, onChange, onRemove }: { h: Holding; onChange: (patch
           <AmountInput value={h.value || null} onChange={(v) => onChange({ value: v ?? 0 })} placeholder="현재 평가액" />
         </div>
       )}
+      {/* 투자 분류 수동 지정 — 계좌 안 종목이 실제로 해외/금이면 지정 (리밸런싱 분류만 바뀜) */}
+      <select value={h.investClass ?? ''} onChange={(e) => onChange({ investClass: (e.target.value || undefined) as Holding['investClass'] })} className={inputCls + ' !py-1.5 text-[12px] mt-1.5'}>
+        <option value="">투자 분류: 자동 (국내주식)</option>
+        <option value="stock_us">해외주식 (예: TIGER S&P500)</option>
+        <option value="gold">금 (예: KODEX 골드)</option>
+        <option value="stock_kr">국내주식</option>
+        <option value="coin">코인</option>
+      </select>
     </div>
   )
 }
@@ -501,6 +608,7 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
   const [holdings, setHoldings] = useState<Holding[]>([])
   const [cash, setCash] = useState<number | null>(null)
   const [archived, setArchived] = useState(false)
+  const [investClass, setInvestClass] = useState('') // 투자 분류 수동 지정 ('' = 자동)
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<Hit[]>([])
   const [searching, setSearching] = useState(false)
@@ -532,12 +640,12 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
       setQuantity(edit.quantity != null ? numStr(edit.quantity) : '')
       setRate(edit.rate != null ? String(edit.rate) : ''); setTaxType(edit.taxType ?? 'normal'); setStartDate(edit.startDate ?? ''); setMaturity(edit.maturity ?? ''); setNoMaturity(!edit.maturity && !!edit.rate)
       setCashKind(edit.type === 'checking' && edit.subLabel === '현금' ? 'cash' : 'bank')
-      setSavingKind(edit.savingKind ?? 'deposit'); setSubLabel(edit.subLabel ?? '연금보험'); setHoldings(edit.holdings ?? []); setCash(edit.cash ?? null); setArchived(!!edit.archived)
+      setSavingKind(edit.savingKind ?? 'deposit'); setSubLabel(edit.subLabel ?? '연금보험'); setHoldings(edit.holdings ?? []); setCash(edit.cash ?? null); setArchived(!!edit.archived); setInvestClass(edit.investClass ?? '')
     } else {
       setType('checking'); setName(''); setInst(''); setMarket('kr')
       setCurrency('KRW'); setFxRate(''); setAmount(null); setTicker('')
       setPrincipal(''); setPrincipalCcy('KRW'); setManual(false); setExtraBalances([]); setQuantity('')
-      setRate(''); setTaxType('normal'); setStartDate(''); setMaturity(''); setNoMaturity(false); setCashKind('bank'); setSavingKind('deposit'); setSubLabel('연금보험'); setHoldings([]); setCash(null); setArchived(false)
+      setRate(''); setTaxType('normal'); setStartDate(''); setMaturity(''); setNoMaturity(false); setCashKind('bank'); setSavingKind('deposit'); setSubLabel('연금보험'); setHoldings([]); setCash(null); setArchived(false); setInvestClass('')
     }
   }, [open, edit])
 
@@ -695,7 +803,7 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
     const hs = pensionInvest
       ? holdings.filter((h) => h.name.trim() || h.value || h.principal || h.ticker).map((h) => ({
           id: h.id, name: h.name.trim(), principal: Number(h.principal) || 0, value: Number(h.value) || 0,
-          ticker: h.ticker || undefined, live: h.live, quantity: h.quantity, unitPrice: h.unitPrice,
+          ticker: h.ticker || undefined, live: h.live, quantity: h.quantity, unitPrice: h.unitPrice, investClass: h.investClass,
         }))
       : undefined
     const amt = pensionInvest ? (hSumValue + (cash ?? 0)) : (useLive ? investValueNative : (amount ?? 0))
@@ -712,6 +820,8 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
       fxRate: assetCurrency && fxNum ? fxNum : undefined,
       institution: inst.trim() || undefined,
       market: sub.live === 'stock' ? market : undefined,
+      // 투자 분류 수동 지정 (그룹/리밸런싱만 영향, 시세는 market 그대로)
+      investClass: isInvest && !pensionInvest && investClass ? (investClass as Asset['investClass']) : undefined,
       principal: principalToStore,
       principalCurrency: principalToStore != null && !pensionInvest ? effPrincipalCcy : undefined,
       principalFx: principalToStore != null && !pensionInvest && effPrincipalCcy !== 'KRW' && effPrincipalCcy !== assetCurrency ? (pFxNum || undefined) : undefined,
@@ -754,6 +864,19 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
               <button key={mk} onClick={() => setMarket(mk)} className={`flex-1 py-2 rounded-[10px] text-[12.5px] font-bold border ${market === mk ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{mk === 'kr' ? '국내' : '해외'}</button>
             ))}
           </div>
+        </Field>
+      )}
+
+      {isInvest && !pensionInvest && (
+        <Field label="투자 분류 (수동 지정)">
+          <select value={investClass} onChange={(e) => setInvestClass(e.target.value)} className={inputCls}>
+            <option value="">자동 ({({ stock_kr: '국내주식', stock_us: '해외주식', coin: '코인', gold: '금' } as Record<string, string>)[type === 'coin' ? 'coin' : type === 'gold' ? 'gold' : market === 'us' ? 'stock_us' : 'stock_kr']})</option>
+            <option value="stock_kr">국내주식</option>
+            <option value="stock_us">해외주식</option>
+            <option value="coin">코인</option>
+            <option value="gold">금</option>
+          </select>
+          <div className="text-[11px] text-sub mt-1">투자 페이지 배분에서만 이 분류로 잡혀요(자산 목록 위치·시세는 그대로). 예: GLD→금, TIGER S&P500→해외주식</div>
         </Field>
       )}
 

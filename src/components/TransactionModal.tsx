@@ -44,6 +44,7 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
   const [splits, setSplits] = useState<DraftSplit[]>([])
   const [incomeAmt, setIncomeAmt] = useState<number | null>(null)
   const [incomeCat, setIncomeCat] = useState(INCOME_CATS[0])
+  const [excludeFromTax, setExcludeFromTax] = useState(false) // 연말정산 소득공제 제외
 
   const catOptions = type === 'income' ? INCOME_CATS : EXPENSE_CATS
 
@@ -55,6 +56,7 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       setMerchant(edit.merchant)
       setCardId(edit.cardId ?? '')
       setMemo(edit.memo ?? '')
+      setExcludeFromTax(!!edit.excludeFromTax)
       setTotal(null)
       if (edit.type === 'income') {
         setIncomeAmt(edit.amount)
@@ -72,6 +74,7 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       setMerchant('')
       setCardId('')
       setMemo('')
+      setExcludeFromTax(false)
       setTotal(null)
       setIncomeAmt(null)
       setIncomeCat(INCOME_CATS[0])
@@ -125,6 +128,7 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       cardId: type === 'expense' && cardId ? cardId : null,
       method: type === 'expense' ? (card?.name ?? '현금/기타') : undefined,
       memo: memo.trim() || undefined,
+      excludeFromTax: type === 'expense' && excludeFromTax ? true : undefined,
       betterCardNote: edit?.betterCardNote,
       splits: finalSplits,
       createdAt: edit?.createdAt ?? new Date().toISOString(),
@@ -283,6 +287,14 @@ export default function TransactionModal({ open, onClose, edit }: Props) {
       <Field label="메모 (선택)">
         <input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder="자유 메모" className={inputCls} />
       </Field>
+
+      {type === 'expense' && (
+        <label className="flex items-center gap-2 mt-2 cursor-pointer select-none">
+          <input type="checkbox" checked={excludeFromTax} onChange={(e) => setExcludeFromTax(e.target.checked)} className="w-4 h-4 accent-mint" />
+          <span className="text-[12.5px] font-semibold">연말정산 사용액에서 제외</span>
+          <span className="text-[11px] text-sub">· 포인트·선물성 등 소득공제 안 되는 지출</span>
+        </label>
+      )}
 
       <div className="flex gap-2 mt-4">
         {edit && (

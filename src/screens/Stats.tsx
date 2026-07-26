@@ -8,7 +8,6 @@ import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab
 import AmountInput from '../components/AmountInput'
 import { krwValue, repayableTotal } from '../lib/assets'
 import { EXPENSE_CATS } from '../lib/categories'
-import { detectFixed } from '../lib/fixedCost'
 
 const CAT_COLORS = ['#12b8a6', '#5b8def', '#f5a524', '#9b8afb', '#e5484d', '#3fc7b8', '#ec6ea6', '#6bbd6e', '#8b96a3', '#c58af9']
 const catColor = (cat: string) => { const i = EXPENSE_CATS.indexOf(cat); return CAT_COLORS[(i < 0 ? EXPENSE_CATS.length : i) % CAT_COLORS.length] }
@@ -81,9 +80,9 @@ export default function Stats() {
   }, [txs, month])
   const catTotal = catSpend.reduce((s, c) => s + c.amt, 0)
 
-  // 월별 카테고리 지출 추이 (데이터 있는 달만 표로)
+  // 월별 카테고리 지출 추이 (데이터 있는 달만 표로) — 선택한 달을 마지막으로 놓고 최근 12개월
   const catTrend = useMemo(() => {
-    const ms = Array.from({ length: 12 }, (_, i) => addMonth(now, -(11 - i)))
+    const ms = Array.from({ length: 12 }, (_, i) => addMonth(month, -(11 - i)))
     const totalByCat: Record<string, number> = {}
     const cols = ms.map((ym) => {
       const map: Record<string, number> = {}
@@ -95,7 +94,7 @@ export default function Stats() {
     }).filter((c) => c.total > 0).slice(-4) // 데이터 있는 달만, 최근 4개까지
     const cats = Object.entries(totalByCat).sort((a, b) => b[1] - a[1]).slice(0, 7).map(([c]) => c)
     return { cols, cats, has: cats.length > 0 }
-  }, [txs, now])
+  }, [txs, month])
 
   // 월 평균 — '보고 있는 달 이전의 거래 있는 달'만 평균. 진행 중인 선택월은 제외.
   //   → 과거 달을 봐도 그 시점 기준으로 고정됨. 달이 쌓일수록 그만큼만 평균에 반영.
@@ -134,9 +133,6 @@ export default function Stats() {
     const rate = avgInc > 0 ? (needMonthly / avgInc) * 100 : null
     return { monthsLeft, needMonthly, rate }
   })()
-
-  const fixed = useMemo(() => detectFixed(txs), [txs])
-  const fixedTotal = fixed.reduce((s, f) => s + f.monthly, 0)
 
   // 이번달 / 지난달 / 작년 같은 달 비교
   const cmp = [
@@ -350,24 +346,6 @@ export default function Stats() {
         )}
       </Card>
 
-      {/* 고정지출·구독 자동 인식 */}
-      <Card className="mt-3.5">
-        <CardLabel>🔁 고정지출·구독{fixed.length > 0 ? ` · 월 ₩${won(fixedTotal)}` : ''}</CardLabel>
-        {fixed.length === 0 ? (
-          <Empty>매달 반복되는 결제가 아직 안 보여요. (2개월 이상 쌓이면 자동 인식)</Empty>
-        ) : (
-          fixed.map((f) => (
-            <div key={f.merchant} className="flex items-center justify-between py-2 border-b border-line last:border-0">
-              <div>
-                <div className="text-[13.5px] font-semibold">{f.merchant} <span className="text-[11px] text-sub font-normal">{f.category}</span></div>
-                <div className="text-[11px] text-sub">{f.months}개월째 · 다음 예상 {f.next.slice(5).replace('-', '/')}</div>
-              </div>
-              <span className="tnum font-bold text-[14px] text-expense">-{won(f.monthly)}/월</span>
-            </div>
-          ))
-        )}
-        {fixed.length > 0 && <div className="text-[11px] text-sub mt-2">💡 안 쓰는 구독이 있다면 여기서 정리 대상을 찾아보세요.</div>}
-      </Card>
       </>)}
 
       {tab === 'goal' && <Fab onClick={() => { setEditGoal(undefined); setModal(true) }} label="목표 추가" />}

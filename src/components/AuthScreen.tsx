@@ -64,8 +64,6 @@ export default function AuthScreen() {
           )}
           {msg && <div className="mt-3 text-[12.5px] text-center bg-mint-l text-mint-d rounded-lg px-3 py-2">{msg}</div>}
         </div>
-
-        <div className="text-[11px] text-sub text-center mt-4">로그인하면 어느 기기에서나 내 데이터를 볼 수 있어요.</div>
       </div>
     </div>
   )

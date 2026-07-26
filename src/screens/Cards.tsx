@@ -4,7 +4,7 @@ import { Plus, Trash2 } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { won, thisMonth, addMonth } from '../lib/format'
-import { ruleMatches, pickTier, ruleTiers, isExcluded, activeSpecialCap, evalRuleMonth, cardSpend } from '../lib/cardAdvisor'
+import { ruleMatches, pickTier, ruleTiers, isExcluded, activeSpecialCap, evalRuleMonth, cardSpend, bestCardFor } from '../lib/cardAdvisor'
 import { Card as Box, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
 import type { BenefitRule, BenefitTier, Card, Transaction } from '../db/types'
@@ -38,6 +38,36 @@ function ExcludeRow({ icon, label, items }: { icon: string; label: string; items
   )
 }
 
+// 🔎 카드 파인더 — 가맹점 이름을 넣으면 등록한 카드 중 가장 유리한 카드를 즉시 추천 (AI 아님, 입력한 혜택 기준)
+function CardFinder({ cards }: { cards: Card[] }) {
+  const [merchant, setMerchant] = useState('')
+  const [amount, setAmount] = useState<number | null>(null)
+  const q = merchant.trim()
+  const hasAmt = !!amount && amount > 0
+  const pick = q ? bestCardFor(q, hasAmt ? amount! : 100000, cards) : null // 금액 없으면 10만원 기준으로 순위만
+  return (
+    <Box className="mb-3.5">
+      <CardLabel>🔎 카드 파인더</CardLabel>
+      <div className="text-[11.5px] text-sub mb-2">가맹점 이름을 넣으면 등록한 카드 중 <b>가장 유리한 카드</b>를 찾아줘요.</div>
+      <div className="flex gap-2">
+        <input value={merchant} onChange={(e) => setMerchant(e.target.value)} placeholder="예: 다이소, 스타벅스, 쿠팡" className={inputCls} />
+        <div className="w-[130px] shrink-0"><AmountInput value={amount} onChange={setAmount} placeholder="금액(선택)" /></div>
+      </div>
+      {q && (pick ? (
+        <div className="mt-2.5 bg-mint-l rounded-xl px-3.5 py-3">
+          <div className="text-[14px] font-bold text-mint-d">👉 {pick.card.name}</div>
+          <div className="text-[12px] text-mint-d mt-0.5">
+            {pick.rule.area} · {pick.rule.kind === 'rate' ? `${pick.tier.value}%` : `건당 ${won(pick.tier.value)}원`}
+            {hasAmt ? ` · 약 ₩${won(pick.saved)} 적립돼요` : ''}
+          </div>
+        </div>
+      ) : (
+        <div className="mt-2.5 text-[12px] text-sub bg-canvas rounded-xl px-3.5 py-3">‘{q}’에 특별히 유리한 카드가 없어요. 기본적립이 좋은 카드로 결제하세요.</div>
+      ))}
+    </Box>
+  )
+}
+
 export default function Cards() {
   const { profileId, profile } = useProfile()
   const month = thisMonth()
@@ -55,6 +85,8 @@ export default function Cards() {
       <PageHeader title="카드혜택" />
 
       {cards.length === 0 && <Empty>오른쪽 아래 ＋ 로 카드·혜택 규칙을 등록하세요.</Empty>}
+
+      {cards.length > 0 && <CardFinder cards={cards} />}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
         {cards.map((c) => {
@@ -92,6 +124,7 @@ export default function Cards() {
                 <div className="font-bold text-[15px] flex items-center gap-1.5">
                   {c.name}
                   {c.type && <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-bold ${c.type === 'credit' ? 'bg-[#e7f0ff] text-income' : 'bg-mint-l text-mint-d'}`}>{c.type === 'credit' ? '신용' : '체크'}</span>}
+                  {c.corporate && <span className="text-[10px] px-1.5 py-0.5 rounded-full font-bold bg-[#f1f0fb] text-[#6b5bd6]">법인</span>}
                 </div>
                 <button onClick={() => { setEdit(c); setModal(true) }} className="text-[12px] text-sub hover:text-ink">수정</button>
               </div>
@@ -202,15 +235,15 @@ function YearEndCard({
 
   const { credit, checkCash } = useMemo(() => {
     let credit = 0, checkCash = 0
-    const typeOf = (t: Transaction) => {
-      if (!t.cardId) return 'cash'
-      return cards.find((c) => c.id === t.cardId)?.type ?? 'credit'
-    }
+    const cardOf = (t: Transaction) => (t.cardId ? cards.find((c) => c.id === t.cardId) : undefined)
     for (const t of allTxs) {
       if (t.type !== 'expense' || !t.date.startsWith(year)) continue
+      if (t.excludeFromTax) continue // 거래에서 '연말정산 제외' 표시한 건(포인트·선물성 등)
+      const card = cardOf(t)
+      if (card?.corporate) continue // 법인카드 사용분 제외
       const myCost = t.splits.filter((s) => !s.owedBy).reduce((a, s) => a + s.amount, 0)
-      if (typeOf(t) === 'credit') credit += myCost
-      else checkCash += myCost
+      if (t.cardId && (card?.type ?? 'credit') === 'credit') credit += myCost
+      else checkCash += myCost // 체크카드 · 현금
     }
     return { credit, checkCash }
   }, [allTxs, cards, year])
@@ -342,6 +375,7 @@ const newCapTier = (): DraftCapTier => ({ minPrev: null, cap: null })
 function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose: () => void; edit?: Card; profileId: string }) {
   const [name, setName] = useState('')
   const [type, setType] = useState<'credit' | 'check'>('credit')
+  const [corp, setCorp] = useState(false) // 법인카드
   const [req, setReq] = useState<number | null>(null)
   const [capTiers, setCapTiers] = useState<DraftCapTier[]>([newCapTier()])
   const [base, setBase] = useState<DraftRule>(newRule())
@@ -352,7 +386,7 @@ function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose:
   useEffect(() => {
     if (!open) return
     if (edit) {
-      setName(edit.name); setType(edit.type ?? 'credit'); setReq(edit.requiredSpend ?? null)
+      setName(edit.name); setType(edit.type ?? 'credit'); setCorp(!!edit.corporate); setReq(edit.requiredSpend ?? null)
       const ct = edit.specialCapTiers?.length ? edit.specialCapTiers : edit.pointCap ? [{ minPrev: undefined, cap: edit.pointCap }] : []
       setCapTiers(ct.length ? ct.map((t) => ({ minPrev: t.minPrev ?? null, cap: t.cap })) : [newCapTier()])
       setBase(edit.baseBenefit ? toDraft(edit.baseBenefit) : newRule())
@@ -360,7 +394,7 @@ function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose:
       setExclude((edit.excludeMerchants ?? []).join(', '))
       setExcludeSpend((edit.excludeFromSpend ?? []).join(', '))
     } else {
-      setName(''); setType('credit'); setReq(null); setCapTiers([newCapTier()])
+      setName(''); setType('credit'); setCorp(false); setReq(null); setCapTiers([newCapTier()])
       setBase(newRule()); setRules([]); setExclude(''); setExcludeSpend('')
     }
   }, [open, edit])
@@ -383,7 +417,7 @@ function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose:
       .map((t) => ({ minPrev: t.minPrev || undefined, cap: Number(t.cap) }))
       .sort((a, b) => (a.minPrev ?? 0) - (b.minPrev ?? 0))
     const c: Card = {
-      id: edit?.id ?? uid(), profileId, name: name.trim(), type,
+      id: edit?.id ?? uid(), profileId, name: name.trim(), type, corporate: corp || undefined,
       requiredSpend: req || undefined, specialCapTiers: specialCapTiers.length ? specialCapTiers : undefined,
       baseBenefit: baseRule ?? undefined, benefits,
       excludeMerchants: exclude.split(',').map((s) => s.trim()).filter(Boolean),
@@ -408,6 +442,11 @@ function CardModal({ open, onClose, edit, profileId }: { open: boolean; onClose:
         </Field>
         <Field label="전월 실적 조건 (원)"><AmountInput value={req} onChange={setReq} placeholder="예: 300,000" /></Field>
       </div>
+      <label className="flex items-center gap-2 -mt-1 mb-2 cursor-pointer select-none">
+        <input type="checkbox" checked={corp} onChange={(e) => setCorp(e.target.checked)} className="w-4 h-4 accent-mint" />
+        <span className="text-[12.5px] font-semibold">법인카드</span>
+        <span className="text-[11px] text-sub">· 이 카드 사용분은 연말정산 소득공제 사용액에서 빠져요</span>
+      </label>
       <div className="text-[11px] text-sub -mt-2 mb-2 leading-relaxed bg-canvas rounded-lg px-2.5 py-2">💡 <b>지난달</b>에 이 금액 이상 써야 이번 달 혜택이 나와요. 조건이 없거나, 아래 <b>구간</b>에 전월실적 조건을 직접 넣는 카드면 비워두세요.</div>
 
       <div className="text-[11px] text-sub mb-2.5 leading-relaxed bg-mint-l text-mint-d rounded-lg px-2.5 py-2">📋 각 혜택은 은행 앱의 <b>‘조건 → 혜택 → 한도’ 표</b> 그대로예요. 간단한 혜택이면 <b>혜택값만</b> 넣고 조건·한도는 비워두세요. 조건이 여러 줄(예: 1만↑ 1% / 30만↑ 2%)이면 <b>구간 추가</b>로 줄을 늘리면 돼요.</div>

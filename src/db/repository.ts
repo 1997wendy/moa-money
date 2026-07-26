@@ -6,6 +6,7 @@
 import { db } from './database'
 import type {
   Asset,
+  AssetSnapshot,
   Card,
   Category,
   CoachNote,
@@ -34,6 +35,11 @@ export interface TxQuery {
 export const repo = {
   // ---- Profiles ----
   listProfiles: () => db.profiles.orderBy('order').toArray(),
+  /** 로컬에 실데이터가 있는지 (자산·거래 기준). 빈 초기화 상태 판별용. */
+  async hasUserData(): Promise<boolean> {
+    const [a, t] = await Promise.all([db.assets.count(), db.transactions.count()])
+    return a > 0 || t > 0
+  },
   upsertProfile: (p: Profile) => db.profiles.put(p),
   deleteProfile: (id: ID) => db.profiles.delete(id),
   /** 프로필 + 그 프로필의 모든 데이터 삭제 (이 기기에서만) */
@@ -139,6 +145,15 @@ export const repo = {
   upsertCoachNote: (n: CoachNote) => db.coachNotes.put(n),
   deleteCoachNote: (id: ID) => db.coachNotes.delete(id),
 
+  // ---- Asset snapshots (월별 자산 상세 스냅샷) ----
+  async listAssetSnapshots(profileId: ID): Promise<AssetSnapshot[]> {
+    const rows = await db.assetSnapshots.where('profileId').equals(profileId).toArray()
+    return rows.sort((a, b) => (a.month < b.month ? 1 : -1)) // 최신 월 먼저
+  },
+  getAssetSnapshot: (profileId: ID, month: string) => db.assetSnapshots.get(`${profileId}::${month}`),
+  upsertAssetSnapshot: (s: AssetSnapshot) => db.assetSnapshots.put(s),
+  deleteAssetSnapshot: (id: ID) => db.assetSnapshots.delete(id),
+
   // ---- Month notes (월별 회고) ----
   getMonthNote: (profileId: ID, month: string) => db.monthNotes.get(`${profileId}::${month}`),
   upsertMonthNote: (profileId: ID, month: string, content: string) =>
@@ -148,16 +163,16 @@ export const repo = {
 
   // ---- 백업 (전체 내보내기/불러오기) ----
   async exportAll() {
-    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx, supports] =
+    const [profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx, supports, assetSnapshots] =
       await Promise.all([
         db.profiles.toArray(), db.assets.toArray(), db.transactions.toArray(),
         db.schedules.toArray(), db.cards.toArray(), db.goals.toArray(),
         db.people.toArray(), db.recurring.toArray(), db.categories.toArray(), db.coachNotes.toArray(), db.monthNotes.toArray(),
-        db.recurringTx.toArray(), db.supports.toArray(),
+        db.recurringTx.toArray(), db.supports.toArray(), db.assetSnapshots.toArray(),
       ])
     return {
-      app: 'money-app', version: 5, exportedAt: new Date().toISOString(),
-      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx, supports,
+      app: 'money-app', version: 6, exportedAt: new Date().toISOString(),
+      profiles, assets, transactions, schedules, cards, goals, people, recurring, categories, coachNotes, monthNotes, recurringTx, supports, assetSnapshots,
     }
   },
   /** 로컬 전체 비우기 (계정 로그아웃/전환 시). 동기화 훅 억제. */
@@ -191,7 +206,7 @@ export const repo = {
   },
   async importAll(data: Record<string, unknown>) {
     const arr = <T,>(key: string): T[] => (Array.isArray(data[key]) ? (data[key] as T[]) : [])
-    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories, db.coachNotes, db.monthNotes, db.recurringTx, db.supports]
+    const tables = [db.profiles, db.assets, db.transactions, db.schedules, db.cards, db.goals, db.people, db.recurring, db.categories, db.coachNotes, db.monthNotes, db.recurringTx, db.supports, db.assetSnapshots]
     await db.transaction('rw', tables, async () => {
       await Promise.all(tables.map((t) => t.clear()))
       await db.profiles.bulkPut(arr<Profile>('profiles'))
@@ -207,6 +222,7 @@ export const repo = {
       await db.monthNotes.bulkPut(arr<MonthNote>('monthNotes'))
       await db.recurringTx.bulkPut(arr<RecurringExpense>('recurringTx'))
       await db.supports.bulkPut(arr<Support>('supports'))
+      await db.assetSnapshots.bulkPut(arr<AssetSnapshot>('assetSnapshots'))
     })
   },
 }

@@ -80,19 +80,22 @@ export default function Ledger() {
     return Object.entries(map).sort((a, b) => b[1] - a[1])
   }, [txs])
 
-  // 목록 필터 (+ 검색)
+  // 목록 필터 (+ 검색). 검색어가 있으면 이번 달이 아니라 '전체 기간'에서 찾음.
+  const searching = search.trim().length > 0
   const list = useMemo(() => {
-    let rows = txs
+    const q = search.trim().toLowerCase()
+    let rows = q ? allTxs : txs // 검색 중엔 전체 거래에서
     if (view === 'expense') rows = rows.filter((t) => t.type === 'expense')
     if (view === 'income') rows = rows.filter((t) => t.type === 'income')
     if (view === 'expense' && cat !== '전체') rows = rows.filter((t) => t.splits.some((s) => s.category === cat))
-    const q = search.trim().toLowerCase()
     if (q) rows = rows.filter((t) =>
       t.merchant.toLowerCase().includes(q) ||
       (t.memo ?? '').toLowerCase().includes(q) ||
       t.splits.some((s) => s.category.toLowerCase().includes(q)))
-    return sort === 'old' ? [...rows].reverse() : rows
-  }, [txs, view, cat, search, sort])
+    // 전체 검색 결과는 날짜 최신순으로 정렬 보장 (월 목록은 이미 정렬돼 있음)
+    const sorted = q ? [...rows].sort((a, b) => b.date.localeCompare(a.date) || (b.createdAt ?? '').localeCompare(a.createdAt ?? '')) : rows
+    return sort === 'old' ? [...sorted].reverse() : sorted
+  }, [txs, allTxs, view, cat, search, sort])
 
   function openAdd() { setEdit(undefined); setModal(true) }
   function openEdit(t: Transaction) { setEdit(t); setModal(true) }
@@ -152,12 +155,15 @@ export default function Ledger() {
         </div>
       </div>
 
-      {/* 검색 */}
-      <div className="relative mb-4">
+      {/* 검색 (검색어 입력 시 전체 기간에서 찾음) */}
+      <div className={`relative ${searching ? 'mb-1.5' : 'mb-4'}`}>
         <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-sub" />
-        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="가맹점·메모·카테고리 검색" className={inputCls + ' pl-9'} />
+        <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="가맹점·메모·카테고리 검색 (전체 기간)" className={inputCls + ' pl-9'} />
         {search && <button onClick={() => setSearch('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-sub hover:text-ink text-[16px]">×</button>}
       </div>
+      {searching && (
+        <div className="mb-4 text-[12px] text-mint-d bg-mint-l rounded-lg px-3 py-2">🔎 전체 기간에서 검색 중 · <b>{list.length}건</b> <span className="text-sub font-normal">(월 이동과 무관하게 모든 달에서 찾아요)</span></div>
+      )}
 
       {/* 합계 */}
       <div className="grid grid-cols-3 gap-2 md:gap-3.5 mb-4">
@@ -191,7 +197,7 @@ export default function Ledger() {
             const hasOut = t.splits.some((s) => s.owedBy && s.owedDir === 'out')
             const myCost = t.type === 'expense' ? t.splits.filter((s) => !s.owedBy).reduce((a, s) => a + s.amount, 0) : t.amount
             const hasOwed = hasIn || hasOut
-            const advice = betterCardAdvice(t, cards, txs, prevTxs)
+            const advice = searching ? null : betterCardAdvice(t, cards, txs, prevTxs)
             return (
               <div key={t.id} onClick={() => openEdit(t)} className="py-3 border-b border-line last:border-0 cursor-pointer hover:bg-canvas -mx-2 px-2 rounded-lg transition-colors">
                 <div className="flex items-center justify-between gap-2">
@@ -204,7 +210,7 @@ export default function Ledger() {
                       {hasOut && <span className="text-[11px] px-2 py-0.5 rounded-full font-bold bg-[#e7f0ff] text-income">줄돈</span>}
                     </div>
                     <div className="text-[11px] text-sub mt-0.5">
-                      {t.date.slice(5).replace('-', '/')}{t.type === 'expense' ? ` · ${t.method ?? '현금/기타'}` : ''}
+                      {searching ? t.date.replace(/-/g, '.') : t.date.slice(5).replace('-', '/')}{t.type === 'expense' ? ` · ${t.method ?? '현금/기타'}` : ''}
                     </div>
                   </div>
                   <div className="text-right shrink-0">

@@ -8,7 +8,7 @@ import { useStockSync } from '../hooks/useStockSync'
 import { useKrStockSync } from '../hooks/useKrStockSync'
 import { useGoldSync } from '../hooks/useGoldSync'
 import { won, signed, thisMonth, todayISO } from '../lib/format'
-import { groupOf, krwValue, repayableTotal } from '../lib/assets'
+import { groupOf, krwValue, investPnl, repayableTotal } from '../lib/assets'
 import { detectFixed } from '../lib/fixedCost'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, inputCls } from '../components/ui'
 import type { Asset, CoachNote, Transaction } from '../db/types'
@@ -25,6 +25,7 @@ const DEFAULT_ALLOC: Record<string, number> = { cash: 20, stock_kr: 30, stock_us
 
 // 주식·ETF 국내/해외 → 국내주식/해외주식(ETF 합침). 코인·금 별도. 연금보험 등 인출 어려운 연금 → 기타. 나머지(현금·예적금·포인트·기타)는 현금성
 function bucketOf(a: Asset): string {
+  if (a.investClass) return a.investClass // 수동 지정 우선 (GLD→금, TIGER S&P500→해외 등)
   if (a.type === 'stock' || a.type === 'etf') return a.market === 'us' ? 'stock_us' : 'stock_kr'
   if (a.type === 'coin') return 'coin'
   if (a.type === 'gold') return 'gold'
@@ -65,7 +66,7 @@ export default function Investment() {
     for (const a of assets) {
       // 계좌형(IRP·연금저축펀드): 종목은 국내주식, 예수금은 현금성으로 분해
       if ((a.holdings && a.holdings.length) || a.cash) {
-        for (const h of a.holdings ?? []) m.stock_kr += (h.value || 0)
+        for (const h of a.holdings ?? []) m[h.investClass ?? 'stock_kr'] += (h.value || 0)
         m.cash += a.cash || 0
         continue
       }
@@ -98,7 +99,27 @@ export default function Investment() {
   const thisNet = monthNet(txs, now)
   const fixedTotal = detectFixed(txs).reduce((s, f) => s + f.monthly, 0)
   const capacity = Math.max(0, Math.round(avgNet * 0.7))
-  const holdingList = assets.filter((a) => (a.type === 'stock' || a.type === 'etf' || a.type === 'coin' || a.type === 'gold') && a.quantity)
+  // 프롬프트에 넣을 보유 종목 — 계좌형(IRP·연금저축) 내부 종목까지 펼치고, 수동 입력 자산도 포함.
+  // 수익률은 investPnl(원화 기준·통화 정규화)로 계산해 잘못된 큰 값(예: 1000000%)이 안 나오게.
+  const holdingList = useMemo(() => {
+    const bucketLabel = (k: string) => BUCKETS.find((b) => b.key === k)?.label ?? k
+    const out: { name: string; bucket: string; value: number; pct: number | null }[] = []
+    for (const a of assets) {
+      // 계좌형(IRP·연금저축펀드): 내부 종목을 개별로 펼침
+      if ((a.holdings && a.holdings.length) || a.cash) {
+        for (const h of a.holdings ?? []) {
+          const pct = h.principal > 0 ? ((h.value - h.principal) / h.principal) * 100 : null
+          out.push({ name: `${a.name}·${h.name}`, bucket: bucketLabel(h.investClass ?? 'stock_kr'), value: h.value || 0, pct })
+        }
+        continue
+      }
+      const bk = bucketOf(a)
+      if (bk === 'cash' || bk === 'etc') continue // 현금성·연금보험은 개별 종목 아님
+      const p = investPnl(a)
+      out.push({ name: a.name, bucket: bucketLabel(bk), value: krwValue(a), pct: p?.pct ?? null })
+    }
+    return out.filter((h) => h.value > 0)
+  }, [assets])
   const [copied, setCopied] = useState(false)
 
   const diffs = ALLOC.map((b) => ({ ...b, cur: sums[b.key], diff: investTotal * effAlloc(b.key) / 100 - sums[b.key] }))
@@ -159,9 +180,8 @@ export default function Investment() {
     for (const b of ALLOC) L.push(`- ${b.label} (현재 ${investTotal ? ((sums[b.key] / investTotal) * 100).toFixed(1) : '0.0'}%)`)
     if (holdingList.length) {
       L.push('', '[보유 종목]')
-      for (const a of holdingList) {
-        const roi = a.principal && a.principal > 0 ? ((krwValue(a) - a.principal) / a.principal) * 100 : null
-        L.push(`- ${a.name}${a.market === 'us' ? '(해외)' : a.market === 'kr' ? '(국내)' : ''}: 평가 ₩${won(krwValue(a))}${roi != null ? `, 수익률 ${roi >= 0 ? '+' : ''}${roi.toFixed(1)}%` : ''}`)
+      for (const h of holdingList) {
+        L.push(`- ${h.name} (${h.bucket}): 평가 ₩${won(h.value)}${h.pct != null ? `, 수익률 ${h.pct >= 0 ? '+' : ''}${h.pct.toFixed(1)}%` : ''}`)
       }
     }
     if (capacity > 0) L.push('', `[월 투자 여력] 약 ₩${won(capacity)} (최근 순수익의 70%)`)

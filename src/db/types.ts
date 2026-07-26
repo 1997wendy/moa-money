@@ -36,7 +36,8 @@ export interface Asset {
   currency?: string // 'KRW' | 'USD' | 'JPY' | 'VND' (기본 KRW)
   fxRate?: number // 외화 1단위 → 원화 환율
   institution?: string // 은행/증권사
-  market?: 'kr' | 'us' // 주식/ETF 국내(kr)/해외(us)
+  market?: 'kr' | 'us' // 주식/ETF 국내(kr)/해외(us) — 시세 동기화 기준(상장 시장)
+  investClass?: 'stock_kr' | 'stock_us' | 'coin' | 'gold' // 투자 분류 수동 지정(그룹/리밸런싱용). 시세는 market 그대로. 예: GLD→gold, TIGER S&P500→stock_us. 없으면 자동
   avgPrice?: number // 평단가 (수익률 계산용)
   quantity?: number // 투자자산 보유 수량
   unitPrice?: number // 단가
@@ -75,6 +76,7 @@ export interface Holding {
   // 종목 검색 연동(선택): 있으면 수량×현재가로 자동 계산·시세 동기화
   ticker?: string // 종목코드(국내) / 코인 id
   live?: 'stock' | 'coin' // 시세 소스 (국내주식·ETF / 코인)
+  investClass?: 'stock_kr' | 'stock_us' | 'coin' | 'gold' // 투자 분류 수동 지정(리밸런싱용). 없으면 국내주식으로 간주. 예: 계좌 안 TIGER S&P500→stock_us
   quantity?: number // 보유 수량
   avgPrice?: number // 평단가 (원)
   unitPrice?: number // 현재가 (원)
@@ -106,6 +108,7 @@ export interface Transaction {
   method?: string // 결제수단 표기(카드 없을 때)
   memo?: string
   splits: Split[]
+  excludeFromTax?: boolean // 연말정산 소득공제 사용액에서 제외 (포인트·선물성 지출 등)
   betterCardNote?: string // "다음엔 이 카드로" 회고 메모
   createdAt: string
 }
@@ -161,6 +164,7 @@ export interface Card {
   profileId: ID
   name: string
   type?: 'credit' | 'check' // 신용/체크 (연말정산 계산용)
+  corporate?: boolean // 법인카드 — 연말정산 소득공제 사용액에서 제외
   requiredSpend?: number // 전월 실적 조건 금액 (미달 시 혜택 미적용)
   specialCapTiers?: { minPrev?: number; cap: number }[] // 특별적립 통합 월 한도 (전월실적별). 기본적립엔 미적용
   pointCap?: number // (legacy) 단일 통합 한도
@@ -243,6 +247,21 @@ export interface Support {
   note?: string
   order: number
   createdAt: string
+}
+
+/**
+ * 월별 자산 상세 스냅샷 — 그 달 '마지막으로 접속한 시점'의 자산 구성을 통째로 얼려 저장.
+ * 나중에(예: 12월에) 7월의 자산 내역을 그대로 돌아볼 수 있게. 값(평가액)은 저장 시점으로 고정.
+ * 브라우저 웹이라 앱을 안 켜면 저장이 안 되므로, 그 달 마지막 접속일 기준이 됨.
+ */
+export interface AssetSnapshot {
+  id: ID // `${profileId}::${month}`
+  profileId: ID
+  month: string // yyyy-mm
+  netWorth: number // '내 돈만'(받은 돈 중 돌려줄 돈 제외) 원화
+  assets: Asset[] // 그 시점 자산 목록 (평가액 고정 — 저장 당시 값 그대로)
+  supports: Support[] // 그 시점 '가족에게 받은 돈' (내 돈만 재현용)
+  updatedAt: string // ISO — 그 달 마지막으로 저장(접속)한 시각
 }
 
 /** 월별 회고 메모 (이번 달 뭘 잘/못했나) */

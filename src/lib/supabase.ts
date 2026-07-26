@@ -6,6 +6,7 @@ const SUPABASE_URL = 'https://grfljmlaqqxnlikiepfz.supabase.co'
 const SUPABASE_ANON_KEY =
   'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImdyZmxqbWxhcXF4bmxpa2llcGZ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODI4MzMwNTUsImV4cCI6MjA5ODQwOTA1NX0.FMQNf8o1mC2KVP_FIwZQpPVuN7cmFm6NOXiMzTDHMxs'
 
+// 기본값(localStorage)으로 세션을 유지 — 창을 닫거나 기기를 꺼도 유지됨.
 export const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: { persistSession: true, autoRefreshToken: true },
 })

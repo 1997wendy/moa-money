@@ -15,11 +15,25 @@ export function useNetWorthSnapshot() {
     if (!profile || assets === undefined) return
     const month = thisMonth()
     // 순자산 추이는 '내 돈만'(받은 돈 중 돌려줄 돈 제외) 기준
-    const total = assets.reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports)
-    const key = `${profile.id}:${month}:${total}`
+    const netWorth = assets.reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports)
+    // 자산 구성이 바뀌면(개수·평가액 변화) 다시 기록되도록 키에 개수도 포함
+    const key = `${profile.id}:${month}:${netWorth}:${assets.length}`
     if (recorded.current === key) return
     recorded.current = key
-    if (profile.netWorthHistory?.[month] === total) return
-    repo.upsertProfile({ ...profile, netWorthHistory: { ...(profile.netWorthHistory ?? {}), [month]: total } })
+    // ① 순자산 추이(숫자) — 대시보드/통계 그래프용
+    if (profile.netWorthHistory?.[month] !== netWorth) {
+      repo.upsertProfile({ ...profile, netWorthHistory: { ...(profile.netWorthHistory ?? {}), [month]: netWorth } })
+    }
+    // ② 이 달 상세 스냅샷 — 그 달 '마지막 접속 시점'의 자산 구성을 통째로 얼려 저장(과거 회고용).
+    //    같은 달에 다시 접속하면 최신 상태로 덮어씀 → 그 달 마지막 모습이 남음.
+    repo.upsertAssetSnapshot({
+      id: `${profile.id}::${month}`,
+      profileId: profile.id,
+      month,
+      netWorth,
+      assets: assets.map((a) => ({ ...a })), // 값 고정(얕은 복사)
+      supports: supports.map((s) => ({ ...s })),
+      updatedAt: new Date().toISOString(),
+    })
   }, [profile, assets, supports])
 }

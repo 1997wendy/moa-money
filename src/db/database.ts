@@ -5,6 +5,7 @@
 import Dexie, { type Table } from 'dexie'
 import type {
   Asset,
+  AssetSnapshot,
   Card,
   Category,
   CoachNote,
@@ -33,6 +34,7 @@ export class MoneyDB extends Dexie {
   monthNotes!: Table<MonthNote, string>
   recurringTx!: Table<RecurringExpense, string>
   supports!: Table<Support, string>
+  assetSnapshots!: Table<AssetSnapshot, string>
 
   constructor() {
     super('money-app')
@@ -58,6 +60,9 @@ export class MoneyDB extends Dexie {
     })
     this.version(5).stores({
       supports: 'id, profileId',
+    })
+    this.version(6).stores({
+      assetSnapshots: 'id, profileId, month',
     })
   }
 }

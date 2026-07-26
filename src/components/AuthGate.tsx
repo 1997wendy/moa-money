@@ -21,13 +21,15 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       setPhase('loading')
       try {
         const cloud = await hasCloud()
-        const localHasData = (await repo.listProfiles()).length > 0
-        if (localHasData && isDirty()) {
+        const localHasData = await repo.hasUserData() // 자산·거래 기준(빈 프로필만 있으면 false)
+        if (cloud && !localHasData) {
+          await pullForce() // ⚠️ 로컬이 비어있으면 무조건 클라우드 원본을 받아옴(빈 데이터로 덮어쓰기 방지)
+        } else if (localHasData && isDirty()) {
           await pushNow() // 로컬에 아직 안 올린 변경이 있으면 그것을 우선 보존해 올림
         } else if (cloud) {
           await pullForce() // 깨끗한 로컬 → 클라우드 계정 데이터를 불러옴
         } else {
-          await repo.wipeLocal() // 새 계정: 이전 로컬 데이터 제거
+          await repo.wipeLocal() // 새 계정(클라우드도 없음): 이전 로컬 데이터 제거
           await initEmptyAccount() // 빈 프로필 1개로 시작(샘플 없음)
           await pushNow() // 클라우드 기준점 생성
         }

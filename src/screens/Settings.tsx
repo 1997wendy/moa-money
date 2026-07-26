@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, Trash2, Plus, Cloud } from 'lucide-react'
+import { Download, Upload, Trash2, Plus, Cloud, History } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
-import { pushNow, pullForce } from '../lib/cloudSync'
+import { pushNow, pullForce, listBackupHistory, restoreBackupHistory, type BackupVersion } from '../lib/cloudSync'
 import { initEmptyAccount } from '../db/seed'
 import { useNavigate } from 'react-router-dom'
 import { createShare, listMyShares, revokeShare, listSharedToMe, SHARE_MENUS, type Share, type MenuPerm, type MenuPerms } from '../lib/sharing'
 import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
-import { Card, CardLabel, PageHeader, Button, Field, inputCls } from '../components/ui'
+import { Card, CardLabel, PageHeader, Button, Field, inputCls, Modal } from '../components/ui'
 
 type Tab = 'data' | 'account' | 'share' | 'menu'
 const TABS: [Tab, string][] = [['data', '데이터·백업'], ['account', '사용자·잠금'], ['share', '공유'], ['menu', '메뉴 표시']]
@@ -191,6 +191,8 @@ function CloudSection() {
   const [cloudAt, setCloudAt] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
+  const [histOpen, setHistOpen] = useState(false)
+  const [versions, setVersions] = useState<BackupVersion[] | null>(null)
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setUserEmail(data.session?.user?.email ?? null))
@@ -262,6 +264,18 @@ function CloudSection() {
     if (r === 'pulled') { setMsg('받았어요. 새로고침할게요…'); setTimeout(() => location.reload(), 800) }
     else setMsg('클라우드에 저장된 데이터가 없어요. 먼저 올리기를 하세요.')
   }
+  async function openHistory() {
+    setHistOpen(true); setVersions(null)
+    setVersions(await listBackupHistory())
+  }
+  async function restoreVersion(v: BackupVersion) {
+    if (!confirm(`${new Date(v.created_at).toLocaleString('ko-KR')} 버전으로 되돌릴까요?\n(자산 ${v.summary?.assets ?? '?'} · 거래 ${v.summary?.transactions ?? '?'}) 지금 데이터는 이 버전으로 덮어써져요.`)) return
+    setBusy(true)
+    const r = await restoreBackupHistory(v.id)
+    setBusy(false)
+    if (r === 'ok') { setMsg('복원했어요. 새로고침할게요…'); setTimeout(() => location.reload(), 800) }
+    else setMsg('복원 실패 — 다시 시도해 주세요.')
+  }
 
   return (
     <Card className="mb-3.5">
@@ -293,10 +307,30 @@ function CloudSection() {
             <span className="text-[12px] text-sub">최신 저장 {cloudAt ? new Date(cloudAt).toLocaleString('ko-KR') : '없음'}</span>
           </div>
           <p className="text-[12px] text-sub mb-2">데이터가 바뀌면 자동으로 올라가고, 다른 기기에서 열면 자동으로 최신을 받아와요. 아래 버튼은 즉시 실행·문제 정리용이에요.</p>
-          <div className="flex gap-2">
+          <div className="flex gap-2 flex-wrap">
             <Button onClick={upload} disabled={busy}><Upload size={14} className="inline -mt-0.5 mr-1" />지금 올리기</Button>
             <Button variant="line" onClick={download} disabled={busy}><Download size={14} className="inline -mt-0.5 mr-1" />클라우드로 덮어쓰기</Button>
+            <Button variant="line" onClick={openHistory} disabled={busy}><History size={14} className="inline -mt-0.5 mr-1" />이전 버전 복원</Button>
           </div>
+          <p className="text-[11px] text-sub mt-1.5">💡 올릴 때마다 이전 버전이 자동 보관돼요(최근 50개). 데이터가 꼬이면 <b>이전 버전 복원</b>으로 되돌릴 수 있어요.</p>
+
+          <Modal open={histOpen} onClose={() => setHistOpen(false)} title="이전 버전 복원">
+            {versions === null ? (
+              <div className="text-center text-sub text-[13px] py-8">불러오는 중…</div>
+            ) : versions.length === 0 ? (
+              <div className="text-center text-sub text-[13px] py-8 leading-relaxed">아직 저장된 이전 버전이 없어요.<br />데이터가 바뀌어 클라우드에 올라갈 때마다 여기에 쌓여요.</div>
+            ) : (
+              versions.map((v) => (
+                <div key={v.id} className="flex items-center justify-between py-2.5 border-b border-line last:border-0">
+                  <div>
+                    <div className="text-[13px] font-semibold">{new Date(v.created_at).toLocaleString('ko-KR')}</div>
+                    <div className="text-[11px] text-sub">자산 {v.summary?.assets ?? '?'} · 거래 {v.summary?.transactions ?? '?'}</div>
+                  </div>
+                  <Button variant="line" onClick={() => restoreVersion(v)} disabled={busy}>복원</Button>
+                </div>
+              ))
+            )}
+          </Modal>
 
           <div className="mt-4 pt-3 border-t border-line">
             <div className="text-[12px] font-semibold text-sub mb-1.5">비밀번호 변경</div>

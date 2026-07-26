@@ -107,8 +107,11 @@ export default function AppShell() {
         <div className="px-5 py-2 text-[11px] text-sub">v0.3</div>
       </aside>
 
-      <main className="md:ml-[212px] px-4 md:px-7 pt-[72px] md:pt-7 pb-28 max-w-[1000px]">
-        {locked ? <LockScreen /> : <Outlet />}
+      {/* 사이드바(212px) 공간만 확보하고, 본문은 남는 영역 가운데 정렬 (오른쪽 쏠림 방지) */}
+      <main className="md:pl-[212px] pt-[72px] md:pt-7 pb-28">
+        <div className="max-w-[1000px] mx-auto px-4 md:px-7">
+          {locked ? <LockScreen /> : <Outlet />}
+        </div>
       </main>
     </div>
   )
