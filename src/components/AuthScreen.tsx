@@ -1,6 +1,6 @@
 // 계정 로그인/회원가입 화면 (로그인 안 하면 앱 대신 이 화면)
 import { useState } from 'react'
-import { supabase, getKeepLogin, setKeepLogin } from '../lib/supabase'
+import { supabase } from '../lib/supabase'
 import Logo from './Logo'
 
 export default function AuthScreen() {
@@ -9,11 +9,9 @@ export default function AuthScreen() {
   const [pw, setPw] = useState('')
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
-  const [keep, setKeep] = useState(getKeepLogin()) // 로그인 상태 유지(기본 켬)
 
   async function submit() {
     if (!email.trim() || pw.length < 6) { setMsg('이메일과 6자 이상 비밀번호를 입력하세요.'); return }
-    setKeepLogin(keep) // 로그인하기 전에 정해야 증표가 올바른 곳에 저장된다
     setBusy(true)
     if (mode === 'login') {
       const { error } = await supabase.auth.signInWithPassword({ email: email.trim(), password: pw })
@@ -56,18 +54,6 @@ export default function AuthScreen() {
           <input type="password" value={pw} onChange={(e) => setPw(e.target.value)} placeholder="비밀번호 (6자 이상)" autoComplete="current-password"
             onKeyDown={(e) => e.key === 'Enter' && submit()}
             className="w-full border border-line rounded-[10px] px-3 py-2.5 text-[14px] mb-3 outline-none focus:border-mint" />
-
-          {mode === 'login' && (
-            <button type="button" onClick={() => setKeep(!keep)} aria-pressed={keep}
-              className="flex items-center gap-2 mb-3 text-[13px] text-sub hover:text-ink">
-              <span className={`w-[18px] h-[18px] rounded-full flex items-center justify-center border transition-colors ${keep ? 'bg-mint border-mint' : 'bg-surface border-line'}`}>
-                <svg width="11" height="11" viewBox="0 0 12 12" fill="none">
-                  <path d="M2.5 6.2L4.8 8.5L9.5 3.8" stroke={keep ? '#fff' : '#c9cfd6'} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-                </svg>
-              </span>
-              로그인 상태 유지
-            </button>
-          )}
 
           <button onClick={submit} disabled={busy} className="w-full bg-mint text-white font-bold text-[14px] rounded-[10px] py-2.5 hover:bg-mint-d disabled:opacity-50">
             {busy ? '처리 중…' : mode === 'login' ? '로그인' : '회원가입'}
