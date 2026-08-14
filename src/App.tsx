@@ -13,18 +13,23 @@ import Cards from './screens/Cards'
 import Settings from './screens/Settings'
 import Import from './screens/Import'
 import Investment from './screens/Investment'
+import Subscription from './screens/Subscription'
 import SharedView from './screens/SharedView'
+import PublicShareView from './screens/PublicShareView'
 
 const router = createBrowserRouter([
+  // 비밀 URL 공유 — 로그인 게이트 바깥(가입 안 한 사람도 열림)
+  { path: '/s/:token', element: <PublicShareView /> },
   {
     path: '/',
-    element: <AppShell />,
+    element: <AuthGate><AppShell /></AuthGate>,
     children: [
       { index: true, element: <Dashboard /> },
       { path: 'ledger', element: <Ledger /> },
       { path: 'import', element: <Import /> },
       { path: 'assets', element: <Assets /> },
       { path: 'calendar', element: <Calendar /> },
+      { path: 'subscription', element: <Subscription /> },
       { path: 'receivables', element: <Receivables /> },
       { path: 'stats', element: <Stats /> },
       { path: 'invest', element: <Investment /> },
@@ -39,9 +44,7 @@ export default function App() {
   return (
     <ProfileProvider>
       <ToastProvider>
-        <AuthGate>
-          <RouterProvider router={router} />
-        </AuthGate>
+        <RouterProvider router={router} />
       </ToastProvider>
     </ProfileProvider>
   )

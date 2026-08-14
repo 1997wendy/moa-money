@@ -1,12 +1,16 @@
 import { useEffect, useRef, useState } from 'react'
-import { Download, Upload, Trash2, Plus, Cloud, History } from 'lucide-react'
+import { Download, Upload, Trash2, Plus, Cloud, History, Link2, Copy, RefreshCw } from 'lucide-react'
 import { repo, uid } from '../db/repository'
 import { useProfile } from '../state/profile'
 import { supabase } from '../lib/supabase'
 import { pushNow, pullForce, listBackupHistory, restoreBackupHistory, type BackupVersion } from '../lib/cloudSync'
 import { initEmptyAccount } from '../db/seed'
 import { useNavigate } from 'react-router-dom'
-import { createShare, listMyShares, revokeShare, listSharedToMe, SHARE_MENUS, type Share, type MenuPerm, type MenuPerms } from '../lib/sharing'
+import {
+  createShare, listMyShares, revokeShare, listSharedToMe, SHARE_MENUS,
+  createPublicShare, listPublicShares, refreshPublicShare, revokePublicShare, publicShareUrl, PUBLIC_SHARE_MENUS,
+  type Share, type MenuPerm, type MenuPerms, type PublicShare,
+} from '../lib/sharing'
 import { hashPin } from '../lib/pin'
 import { todayISO } from '../lib/format'
 import { HIDEABLE } from '../components/AppShell'
@@ -354,14 +358,14 @@ const PERM_OPTS: [MenuPerm, string][] = [['hidden', '숨김'], ['read', '읽기'
 const defaultPerms = (): MenuPerms => Object.fromEntries(SHARE_MENUS.map((m) => [m.key, 'read'])) as MenuPerms
 
 function ShareSection() {
-  const { profiles } = useProfile()
+  const { profiles, enterShared } = useProfile()
   const nav = useNavigate()
   const [userEmail, setUserEmail] = useState<string | null>(null)
   const [profileId, setProfileId] = useState('')
   const [target, setTarget] = useState('')
   const [perms, setPerms] = useState<MenuPerms>(defaultPerms())
   const [shares, setShares] = useState<Share[]>([])
-  const [received, setReceived] = useState<Share[]>([])
+  const [received, setReceived] = useState<(Share & { data: Record<string, unknown> })[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
   const [msg, setMsg] = useState('')
   const [busy, setBusy] = useState(false)
@@ -465,8 +469,14 @@ function ShareSection() {
         )}
       </Card>
 
+      <PublicLinkSection />
+
       <Card className="mt-3.5">
         <CardLabel>나에게 공유된 프로필</CardLabel>
+        <p className="text-[12px] text-sub mb-2.5">
+          왼쪽 <b className="text-ink">프로필 선택</b>의 <b className="text-ink">공유받음</b>에서도 바로 전환할 수 있어요.
+          전환하면 평소 내 화면처럼 메뉴를 옮겨 다니며 볼 수 있습니다.
+        </p>
         {received.length === 0 ? <p className="text-[13px] text-sub">받은 공유가 없어요.</p> : (
           received.map((s) => (
             <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
@@ -474,11 +484,166 @@ function ShareSection() {
                 <div className="text-[13.5px] font-semibold">{s.profile_name}</div>
                 <div className="text-[11px] text-sub">{s.owner_email ?? '상대'} 님이 공유 · {summary(s)}</div>
               </div>
-              <button onClick={() => nav(`/shared/${s.id}`)} className="text-[12px] font-bold text-white bg-mint rounded-lg px-3 py-1.5 hover:bg-mint-d">읽기전용 열기</button>
+              <button
+                onClick={() => {
+                  enterShared({
+                    shareId: s.id, ownerEmail: s.owner_email, profileName: s.profile_name,
+                    menuPerms: s.menu_perms ?? {}, data: s.data ?? {},
+                  })
+                  nav('/')
+                }}
+                className="text-[12px] font-bold text-white bg-mint rounded-lg px-3 py-1.5 hover:bg-mint-d shrink-0"
+              >
+                이 프로필로 보기
+              </button>
             </div>
           ))
         )}
       </Card>
     </>
+  )
+}
+
+/* ===== 비밀 링크: 이메일 없이, 가입 안 한 사람도 열 수 있는 읽기 전용 주소 ===== */
+
+const EXPIRY_OPTS: [number | null, string][] = [[7, '7일'], [30, '30일'], [null, '무기한']]
+const defaultPubPerms = (): MenuPerms =>
+  Object.fromEntries(PUBLIC_SHARE_MENUS.map((m) => [m.key, 'read'])) as MenuPerms
+
+function PublicLinkSection() {
+  const { profiles } = useProfile()
+  const [profileId, setProfileId] = useState('')
+  const [label, setLabel] = useState('')
+  const [perms, setPerms] = useState<MenuPerms>(defaultPubPerms())
+  const [days, setDays] = useState<number | null>(30)
+  const [links, setLinks] = useState<PublicShare[]>([])
+  const [made, setMade] = useState<string | null>(null) // 방금 만든 링크 주소
+  const [msg, setMsg] = useState('')
+  const [busy, setBusy] = useState(false)
+  const [open, setOpen] = useState(false)
+
+  useEffect(() => { refresh() }, [])
+  useEffect(() => { if (profiles.length && !profileId) setProfileId(profiles[0].id) }, [profiles, profileId])
+  async function refresh() { setLinks(await listPublicShares()) }
+
+  async function copy(url: string) {
+    try { await navigator.clipboard.writeText(url); setMsg('링크를 복사했어요.') }
+    catch { setMsg('복사에 실패했어요. 주소를 길게 눌러 직접 복사하세요.') }
+  }
+
+  async function create() {
+    const p = profiles.find((x) => x.id === profileId)
+    if (!p) { setMsg('프로필을 선택하세요.'); return }
+    if (!Object.values(perms).some((v) => v !== 'hidden')) { setMsg('보여줄 항목을 하나 이상 켜세요.'); return }
+    setBusy(true)
+    const r = await createPublicShare({ profileId: p.id, profileName: p.name, menuPerms: perms, label, days })
+    setBusy(false)
+    if (!r.ok) { setMsg(r.reason === 'noauth' ? '먼저 데이터·백업 탭에서 로그인하세요.' : '링크 생성 실패. 네트워크를 확인하세요.'); return }
+    const url = publicShareUrl(r.token)
+    setMade(url); setLabel(''); setMsg(''); copy(url); refresh()
+  }
+
+  async function doRefresh(s: PublicShare) {
+    setBusy(true)
+    const ok = await refreshPublicShare(s)
+    setBusy(false)
+    setMsg(ok ? '지금 데이터로 갱신했어요.' : '갱신 실패. (오래된 링크는 다시 만들어 주세요)')
+    refresh()
+  }
+
+  async function remove(id: string) {
+    if (!confirm('이 링크를 삭제할까요?\n삭제하면 링크를 가진 사람도 더는 볼 수 없어요.')) return
+    await revokePublicShare(id); setMade(null); refresh()
+  }
+
+  const expiryText = (s: PublicShare) => {
+    if (!s.expires_at) return '무기한'
+    const left = Math.ceil((new Date(s.expires_at).getTime() - Date.now()) / 86400000)
+    return left <= 0 ? '만료됨' : `${left}일 남음`
+  }
+
+  return (
+    <Card className="mt-3.5">
+      <CardLabel>🔗 비밀 링크 (가입 없이 열람)</CardLabel>
+      <p className="text-[12px] text-sub mb-3 leading-relaxed">
+        이메일 없이 <b className="text-ink">주소만 알면 열리는</b> 읽기 전용 링크예요. 받는 사람이 모아에 가입하지 않아도 돼요.<br />
+        <b className="text-ink">숨김으로 둔 항목은 링크에 아예 담기지 않습니다.</b>
+      </p>
+
+      {!open ? (
+        <Button variant="line" onClick={() => setOpen(true)} className="w-full"><Link2 size={14} className="inline mr-1" />비밀 링크 만들기</Button>
+      ) : (
+        <div className="bg-canvas rounded-xl p-3 mb-3">
+          <Field label="공유할 프로필">
+            <select value={profileId} onChange={(e) => setProfileId(e.target.value)} className={inputCls}>
+              {profiles.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+            </select>
+          </Field>
+          <Field label="메모 (선택 · 나만 봐요)">
+            <input value={label} onChange={(e) => setLabel(e.target.value)} placeholder="예: 엄마한테 보낸 링크" className={inputCls} />
+          </Field>
+
+          <div className="text-[12px] font-semibold text-sub mb-1.5">보여줄 항목</div>
+          <div className="space-y-1.5 mb-3">
+            {PUBLIC_SHARE_MENUS.map((m) => (
+              <div key={m.key} className="flex items-center justify-between">
+                <span className="text-[13px] font-semibold">{m.label}</span>
+                <div className="flex bg-surface rounded-lg p-0.5">
+                  {([['hidden', '숨김'], ['read', '보이기']] as [MenuPerm, string][]).map(([v, l]) => (
+                    <button key={v} onClick={() => setPerms((p) => ({ ...p, [m.key]: v }))}
+                      className={`px-2.5 py-1 rounded-md text-[12px] font-bold transition-colors ${perms[m.key] === v ? (v === 'hidden' ? 'bg-ink text-white' : 'bg-mint text-white') : 'text-sub'}`}>{l}</button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <div className="text-[12px] font-semibold text-sub mb-1.5">유효 기간</div>
+          <div className="flex gap-1.5 mb-3">
+            {EXPIRY_OPTS.map(([v, l]) => (
+              <button key={l} onClick={() => setDays(v)}
+                className={`flex-1 py-2 rounded-[10px] text-[12px] font-bold border ${days === v ? 'bg-mint text-white border-mint' : 'bg-surface text-sub border-line'}`}>{l}</button>
+            ))}
+          </div>
+
+          <div className="flex gap-2">
+            <Button onClick={create} disabled={busy}>링크 만들기</Button>
+            <Button variant="line" onClick={() => { setOpen(false); setMade(null); setPerms(defaultPubPerms()) }}>닫기</Button>
+          </div>
+        </div>
+      )}
+
+      {made && (
+        <div className="bg-mint-l rounded-xl p-3 mb-3">
+          <div className="text-[12px] font-bold text-mint-d mb-1.5">링크가 만들어졌어요 (복사됨)</div>
+          <div className="text-[11.5px] break-all bg-surface rounded-lg px-2.5 py-2 mb-2 tnum">{made}</div>
+          <div className="flex gap-2">
+            <button onClick={() => copy(made)} className="text-[12px] font-bold text-mint-d border border-line bg-surface rounded-lg px-2.5 py-1.5"><Copy size={13} className="inline mr-1" />복사</button>
+            <a href={made} target="_blank" rel="noreferrer" className="text-[12px] font-bold text-mint-d border border-line bg-surface rounded-lg px-2.5 py-1.5">새 탭에서 열기</a>
+          </div>
+        </div>
+      )}
+
+      <div className="text-[12px] font-bold text-sub mt-3 mb-1.5">만든 링크 {links.length}개</div>
+      {links.length === 0 ? (
+        <p className="text-[12.5px] text-sub">아직 없어요.</p>
+      ) : links.map((s) => (
+        <div key={s.id} className="flex items-center justify-between py-2 border-b border-line last:border-0">
+          <div className="min-w-0">
+            <div className="text-[13.5px] font-semibold truncate">{s.label || s.profile_name}</div>
+            <div className="text-[11px] text-sub">
+              {s.profile_name} · {expiryText(s)} · {s.updated_at?.slice(0, 10).replace(/-/g, '.')} 기준
+            </div>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button onClick={() => copy(publicShareUrl(s.id))} title="링크 복사" className="text-sub hover:text-mint-d p-1"><Copy size={15} /></button>
+            <button onClick={() => doRefresh(s)} disabled={busy} title="지금 데이터로 갱신" className="text-sub hover:text-mint-d p-1"><RefreshCw size={15} /></button>
+            <button onClick={() => remove(s.id)} title="삭제" className="text-sub hover:text-expense p-1"><Trash2 size={15} /></button>
+          </div>
+        </div>
+      ))}
+
+      {msg && <div className="mt-3 text-[12.5px] bg-mint-l text-mint-d rounded-lg px-3 py-2">{msg}</div>}
+    </Card>
   )
 }
