@@ -1,6 +1,7 @@
 // 클라우드 자동 동기화 (스냅샷 방식, 마지막-쓰기-우선 + 충돌 감지)
 import { supabase } from './supabase'
 import { repo } from '../db/repository'
+import { refreshAllMyShares } from './sharing'
 
 const LAST = 'moa.lastSyncMs' // 마지막으로 클라우드와 맞춘 시각(ms)
 const DIRTY = 'moa.dirtyAt' // 마지막 로컬 변경 시각(ms)
@@ -99,12 +100,33 @@ export async function pushNow(): Promise<'ok' | 'noauth' | 'error' | 'skipped-em
       return 'skipped-empty'
     }
   }
+  // ⚠️ 안전장치: 이 기기엔 아직 없는 '지난 기록'(월별 자산 스냅샷 등)이 클라우드엔 쌓여 있을 수 있다.
+  //   그대로 올리면 남의 기기에서 만든 기록을 통째로 지워버리므로, 클라우드 것을 그대로 얹어서 올린다.
+  const p = payload as unknown as Record<string, unknown[]>
+  const HISTORY = ['assetSnapshots', 'monthNotes', 'coachNotes']
+  if (HISTORY.some((k) => (p[k]?.length ?? 0) === 0)) {
+    const { data } = await supabase.from('backups').select('data').maybeSingle()
+    const cloud = ((data as { data?: Record<string, unknown[]> } | null)?.data) ?? {}
+    for (const k of HISTORY) {
+      if ((p[k]?.length ?? 0) === 0 && (cloud[k]?.length ?? 0) > 0) p[k] = cloud[k]
+    }
+  }
   const updatedAt = new Date().toISOString()
   const { error } = await supabase.from('backups').upsert({ user_id: id, data: payload, updated_at: updatedAt })
   if (error) return 'error'
   markSynced(Date.parse(updatedAt))
   await saveHistory(id, payload) // 이전 버전 히스토리 적립
+  void refreshSharesThrottled() // 내가 만든 공유본도 최신으로 (기다리지 않음)
   return 'ok'
+}
+
+// 공유본 자동 갱신 — 동기화는 4초마다도 일어나므로 1분에 한 번으로 제한
+const SHARE_REFRESH_GAP_MS = 60 * 1000
+let lastShareRefresh = 0
+async function refreshSharesThrottled() {
+  if (Date.now() - lastShareRefresh < SHARE_REFRESH_GAP_MS) return
+  lastShareRefresh = Date.now()
+  await refreshAllMyShares()
 }
 
 /** 클라우드가 더 최신이고 로컬이 깨끗하면 자동 반영 */
