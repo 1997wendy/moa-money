@@ -73,7 +73,7 @@ export default function Investment() {
       m[bucketOf(a)] += krwValue(a)
     }
     // '내 돈만' 기준 — 돌려줘야 하는 받은 돈은 현금성(예적금)에서 차감
-    m.cash = Math.max(0, m.cash - repayableTotal(supports))
+    m.cash = Math.max(0, m.cash - repayableTotal(supports, assets))
     return m
   }, [assets, supports])
   const total = BUCKETS.reduce((s, b) => s + sums[b.key], 0)

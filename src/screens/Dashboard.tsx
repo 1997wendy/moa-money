@@ -33,7 +33,7 @@ export default function Dashboard() {
   const supports = useLiveQuery(() => (profileId ? repo.listSupports(profileId) : []), [profileId], [])
 
   // '내 돈만' 기준 (받은 돈 중 돌려줄 돈은 제외) — 대시보드·통계·목표·투자는 모두 내 돈 기준
-  const totalAssets = assetList.reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports)
+  const totalAssets = assetList.reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports, assetList)
 
   // 실제 순자산 추이 — 월별 스냅샷 기록. 이번 달은 현재 총자산으로 갱신
   const recorded = useRef('')
@@ -94,7 +94,7 @@ export default function Dashboard() {
 
       <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
         <Card className="col-span-2 md:col-span-1">
-          <CardLabel>{repayableTotal(supports) > 0 ? '내 돈 (받은 돈 제외)' : '총 자산'}</CardLabel>
+          <CardLabel>{repayableTotal(supports, assetList) > 0 ? '내 돈 (받은 돈 제외)' : '총 자산'}</CardLabel>
           <div className="font-extrabold tnum" style={{ fontSize: bigFs }}>{won(totalAssets)}</div>
         </Card>
         <Card>

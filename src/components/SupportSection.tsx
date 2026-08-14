@@ -2,22 +2,26 @@
 //  · 매달 받는 것: 월 금액 × 받은 개월수로 누적액·회차 자동 계산
 //  · 일시금(증여·펀드): 금액 그대로
 //  · '돌려줘야 할 수도 있음'을 켠 항목만 '내 돈만'에서 차감 (증여·연금보험처럼 안 갚아도 되는 건 이미 내 돈)
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { X, Plus } from 'lucide-react'
+import { useLiveQuery } from 'dexie-react-hooks'
 import { repo, uid } from '../db/repository'
 import { won, thisMonth } from '../lib/format'
-import { providerLabel, supportMonths, supportTotal, repayableTotal } from '../lib/assets'
+import { providerLabel, supportMonths, supportTotal, repayableTotal, krwValue, NOT_IN_ASSETS } from '../lib/assets'
 import { Card, CardLabel, Button, Modal, Field, inputCls } from './ui'
 import AmountInput from './AmountInput'
 import MonthInput from './MonthInput'
+import Autocomplete from './Autocomplete'
 import type { Support } from '../db/types'
 
 export default function SupportSection({ profileId, supports }: { profileId: string; supports: Support[] }) {
   const [open, setOpen] = useState(false)
   const [edit, setEdit] = useState<Support | undefined>()
+  const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
+  const assetName = (id?: string) => assets.find((a) => a.id === id)?.name
 
   const received = supports.reduce((s, x) => s + supportTotal(x), 0) // 받은 돈 총액
-  const repayable = repayableTotal(supports) // 돌려줘야 하는 금액
+  const repayable = repayableTotal(supports, assets) // 돌려줘야 하는 금액
 
   const openEdit = (s?: Support) => { setEdit(s); setOpen(true) }
   const del = async (s: Support) => { if (confirm(`'${s.label}' 기록을 삭제할까요?`)) await repo.deleteSupport(s.id) }
@@ -55,6 +59,15 @@ export default function SupportSection({ profileId, supports }: { profileId: str
                           s.note || null,
                         ].filter(Boolean).join(' · ')}
                       </div>
+                      {/* 어느 자산에 들어있는지 (연결한 것만 짧게 표시) */}
+                      {s.linkedAssetId && s.linkedAssetId !== NOT_IN_ASSETS && (
+                        <div className="text-[11px] text-mint-d mt-0.5 truncate">
+                          {assetName(s.linkedAssetId) ? `→ ${assetName(s.linkedAssetId)}` : '⚠️ 연결한 자산이 없어졌어요'}
+                        </div>
+                      )}
+                      {s.repay && s.linkedAssetId === NOT_IN_ASSETS && (
+                        <div className="text-[11px] text-sub mt-0.5">자산에 없음 · 차감 안 함</div>
+                      )}
                     </div>
                     <div className="text-[14px] font-bold tnum shrink-0">₩{won(supportTotal(s))}</div>
                   </div>
@@ -85,6 +98,10 @@ function SupportModal({ open, onClose, edit, profileId, count }: { open: boolean
   const [endMonth, setEndMonth] = useState('')
   const [repay, setRepay] = useState(false)
   const [note, setNote] = useState('')
+  const [linkName, setLinkName] = useState('') // 이 돈이 들어있는 자산 이름 (비우면 = 자산에 없음)
+  const inited = useRef(false)
+  const assets = useLiveQuery(() => (profileId ? repo.listAssets(profileId) : []), [profileId], [])
+  const linkedAsset = assets.find((a) => a.name === linkName.trim())
 
   useEffect(() => {
     if (!open) return
@@ -96,7 +113,17 @@ function SupportModal({ open, onClose, edit, profileId, count }: { open: boolean
       setWho(''); setLabel(''); setKind('monthly'); setAmount(null)
       setMonthlyAmount(null); setStartMonth(''); setEndMonth(''); setRepay(false); setNote('')
     }
+    setLinkName('')
+    inited.current = false
   }, [open, edit])
+
+  // 연결된 자산 이름 채우기 — 자산 목록이 늦게 로드될 수 있어서, 열린 뒤 딱 한 번만 채운다
+  // (한 번만 해야 사용자가 직접 비운 걸 되살리지 않음)
+  useEffect(() => {
+    if (!open || inited.current || assets.length === 0) return
+    inited.current = true
+    if (edit?.linkedAssetId) setLinkName(assets.find((a) => a.id === edit.linkedAssetId)?.name ?? '')
+  }, [open, edit, assets])
 
   // 매달 받은 개월수 미리보기
   const months = kind === 'monthly' && startMonth
@@ -120,6 +147,8 @@ function SupportModal({ open, onClose, edit, profileId, count }: { open: boolean
       startMonth: kind === 'monthly' ? (startMonth || undefined) : undefined,
       endMonth: kind === 'monthly' ? (endMonth || undefined) : undefined,
       repay, note: note.trim() || undefined,
+      // 자산을 고르면 그 id, 비워두면 '자산에 없음'(→ '내 돈만'에서 빼지 않음)
+      linkedAssetId: linkedAsset ? linkedAsset.id : NOT_IN_ASSETS,
       order: edit?.order ?? count,
       createdAt: edit?.createdAt ?? new Date().toISOString(),
     }
@@ -159,10 +188,21 @@ function SupportModal({ open, onClose, edit, profileId, count }: { open: boolean
         </div>
       )}
 
+      {/* 이 돈이 들어있는 자산 — 검색해서 고름. 비우면 '자산에 없음'(차감 안 함) */}
+      <Field label="이 돈이 들어있는 자산 (없으면 비움)">
+        <Autocomplete value={linkName} onChange={setLinkName} options={assets.map((a) => a.name)} placeholder="자산 이름 검색" />
+      </Field>
+      {linkedAsset && (
+        <div className="text-[11.5px] text-mint-d -mt-1 mb-2">₩{won(krwValue(linkedAsset))} · 이 자산에 포함</div>
+      )}
+
       <label className="flex items-start gap-2 text-[12.5px] mt-1 mb-1 cursor-pointer">
         <input type="checkbox" checked={repay} onChange={(e) => setRepay(e.target.checked)} className="mt-0.5" />
-        <span>돌려줘야 할 수도 있는 돈이에요 <span className="text-sub">(체크하면 ‘내 돈만’ 총액에서 빠져요. 증여처럼 안 갚아도 되는 건 체크 마세요)</span></span>
+        <span>돌려줘야 할 수도 있는 돈이에요 <span className="text-sub">(‘내 돈만’에서 빠져요)</span></span>
       </label>
+      {repay && !linkedAsset && (
+        <div className="text-[11.5px] text-sub -mt-0.5 mb-2">자산이 비어 있어 빼지 않아요.</div>
+      )}
 
       <Field label="비고 (선택)"><input value={note} onChange={(e) => setNote(e.target.value)} placeholder="예: 20.1~22.12 받음 / 돌려줘야 할 수도" className={inputCls} /></Field>
 

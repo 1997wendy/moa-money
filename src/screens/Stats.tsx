@@ -36,7 +36,7 @@ export default function Stats() {
   const supports = useLiveQuery(() => (profileId ? repo.listSupports(profileId) : []), [profileId], [])
 
   // '내 돈만' 기준 (받은 돈 중 돌려줄 돈 제외)
-  const totalAssets = (assets ?? []).reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports)
+  const totalAssets = (assets ?? []).reduce((s, a) => s + krwValue(a), 0) - repayableTotal(supports, assets ?? [])
   const now = thisMonth()
 
   const activeGoal = useMemo(

@@ -15,6 +15,8 @@ export interface Profile {
   investContext?: string // 투자 성향/메모 (적립식 등) — 코칭 반영
   netWorthHistory?: Record<string, number> // 월별(yyyy-mm) 순자산 스냅샷 — 실제 추이용
   calSubs?: CalSub[] // 구독 캘린더(.ics) — 구글·카카오 등 외부 일정 읽기
+  applyRegions?: string[] // 청약 관심지역 (분양 주소에 포함될 단어. 예: 강남구, 반포동)
+  applyCase?: 'rank2' | 'rank1_owned' | 'rank1_nohome' // 청약 조건(순위·무주택 여부) — 내가 노릴 수 있는 물량 계산용
 }
 
 /** 외부 캘린더 구독 (.ics URL) */
@@ -244,6 +246,13 @@ export interface Support {
   startMonth?: string // yyyy-mm 받기 시작한 달 (kind='monthly')
   endMonth?: string // yyyy-mm 마지막으로 받은 달 (없으면 이번 달까지 계속)
   repay: boolean // 돌려줘야 할 수도 있음 → '내 돈만'에서 차감
+  /**
+   * 이 돈이 '자산' 목록의 어디에 들어 있는지 (중복 계산·잘못된 차감을 막기 위한 연결).
+   *  · 자산 id   = 그 자산 항목에 포함되어 있음 → 목록에 '→ OO에 반영됨' 표시
+   *  · 'none'    = 자산 목록에 없는 돈 → 돌려줄 돈이어도 '내 돈만'에서 빼지 않는다 (뺄 게 애초에 없으므로)
+   *  · 값 없음   = 아직 지정 안 함(예전 기록) → 지금까지와 똑같이 동작
+   */
+  linkedAssetId?: string
   note?: string
   order: number
   createdAt: string

@@ -152,19 +152,46 @@ export const providerLabel = (s: Support): string =>
   s.provider === 'other' ? (s.providerName?.trim() || '기타') : (SUPPORT_PROVIDERS.find((p) => p.key === s.provider)?.label ?? '')
 
 /** 시작월~종료월(없으면 이번달) 사이 받은 개월수 (양끝 포함) */
-export function supportMonths(s: Support): number {
+/**
+ * 매달 받은 개월수.
+ * @param asOf 'yyyy-mm' — 이 달까지만 세고 싶을 때. (지난 달 기록을 볼 때 필수)
+ *   예전엔 항상 '오늘'까지 셌더니, 7월 기록을 열어도 8월까지 받은 걸로 계산되는 문제가 있었다.
+ */
+export function supportMonths(s: Support, asOf?: string): number {
   if (s.kind !== 'monthly' || !s.startMonth) return 0
-  const end = s.endMonth || thisMonth()
+  const cap = asOf || thisMonth()
+  const end = s.endMonth && s.endMonth < cap ? s.endMonth : cap // 그 달을 넘겨서 세지 않는다
   const [sy, sm] = s.startMonth.split('-').map(Number)
   const [ey, em] = end.split('-').map(Number)
   return Math.max(0, (ey - sy) * 12 + (em - sm) + 1)
 }
 
-/** 한 지원 항목의 누적 금액 (매달=월금액×개월수, 일시금=amount) */
-export function supportTotal(s: Support): number {
-  return s.kind === 'monthly' ? (s.monthlyAmount || 0) * supportMonths(s) : (s.amount || 0)
+/** 한 지원 항목의 누적 금액 (매달=월금액×개월수, 일시금=amount). asOf = 그 달 기준으로 계산 */
+export function supportTotal(s: Support, asOf?: string): number {
+  return s.kind === 'monthly' ? (s.monthlyAmount || 0) * supportMonths(s, asOf) : (s.amount || 0)
 }
 
-/** 돌려줘야 하는(repay) 지원금 합계 — '내 돈만'에서 차감할 금액 */
-export const repayableTotal = (supports: Support[]): number =>
-  supports.filter((s) => s.repay).reduce((sum, s) => sum + supportTotal(s), 0)
+/** '이 돈은 자산 목록에 없다'는 표시 (Support.linkedAssetId 에 넣는 값) */
+export const NOT_IN_ASSETS = 'none'
+
+/**
+ * 돌려줘야 하는(repay) 지원금 합계 — '내 돈만'에서 차감할 금액.
+ *
+ * 단, **자산 목록에 없는 돈은 빼지 않는다.** 총자산은 자산 목록만 더한 값이라,
+ * 자산에 없는 돈을 빼면 '내 돈만'이 실제보다 그만큼 적게 나온다.
+ * (예: 엄마가 넣어주는 연금보험을 자산에서 지웠는데 차감은 계속돼서 770만원이 덜 잡히던 문제)
+ */
+export function repayableTotal(supports: Support[], assets: Asset[] = [], asOf?: string): number {
+  return supports.reduce((sum, s) => {
+    if (!s.repay) return sum
+    if (s.linkedAssetId === NOT_IN_ASSETS) return sum // 자산에 없는 돈 → 뺄 것도 없음
+    const total = supportTotal(s, asOf)
+    if (!s.linkedAssetId) return sum + total // 연결을 아직 안 지정한 예전 기록 → 지금까지처럼 전액
+    const asset = assets.find((a) => a.id === s.linkedAssetId)
+    if (!asset) return sum + total // 연결한 자산이 사라짐 → 안전하게 전액 (화면에서 다시 지정하라고 알려줌)
+    // ★ 자산에 실제로 들어와 있는 만큼만 뺀다.
+    //   예: 연금보험이 매달 10일 입금인데 받은 돈은 1일에 회차가 올라간다.
+    //   1~9일엔 '받은 돈 770만 > 자산 748만'이라, 그대로 빼면 22만원이 더 빠진다.
+    return sum + Math.min(total, krwValue(asset))
+  }, 0)
+}

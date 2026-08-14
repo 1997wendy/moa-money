@@ -16,7 +16,7 @@ import { useHoldingSync } from '../hooks/useHoldingSync'
 import { fetchFxRate } from '../lib/fx'
 import { won, money, curSymbol, smallPrice, todayISO } from '../lib/format'
 import {
-  SUBTYPES, BANKS, SECURITIES, EXCHANGES, PENSION_KINDS, PENSION_PROVIDERS, CURRENCIES, TAX_LABELS, TAX_RATES, subOf, groupOf, krwValue, investPnl, expectedInterest, repayableTotal,
+  SUBTYPES, BANKS, SECURITIES, EXCHANGES, PENSION_KINDS, PENSION_PROVIDERS, CURRENCIES, TAX_LABELS, TAX_RATES, subOf, groupOf, krwValue, investPnl, expectedInterest, repayableTotal, supportTotal, supportMonths,
 } from '../lib/assets'
 import { Card, CardLabel, PageHeader, Button, Empty, Modal, Field, inputCls, Fab } from '../components/ui'
 import AmountInput from '../components/AmountInput'
@@ -24,7 +24,7 @@ import Autocomplete from '../components/Autocomplete'
 import DateInput from '../components/DateInput'
 import DecimalInput from '../components/DecimalInput'
 import SupportSection from '../components/SupportSection'
-import type { Asset, Holding, ExtraBalance } from '../db/types'
+import type { Asset, Holding, ExtraBalance, Support } from '../db/types'
 
 // ===== 표시용 그룹 (투자는 주식·ETF / 코인 / 금 별도 블럭으로 쪼갬) =====
 interface DGroup { key: string; label: string; emoji: string; color: string }
@@ -140,7 +140,7 @@ export default function Assets() {
 
   const supports = useLiveQuery(() => (profileId ? repo.listSupports(profileId) : []), [profileId], [])
   const total = assets.filter(countsToTotal).reduce((s, a) => s + krwValue(a), 0)
-  const repayable = repayableTotal(supports) // 돌려줘야 하는 지원금
+  const repayable = repayableTotal(supports, assets) // 돌려줘야 하는 지원금
   const myMoney = total - repayable // '온전한 내 돈'
 
   // 만기 임박 먼저(임박순), 그다음 금액 큰 순
@@ -401,6 +401,11 @@ function SnapshotModal({ open, onClose, profileId }: { open: boolean; onClose: (
   const [month, setMonth] = useState('')
   const [pickerOpen, setPickerOpen] = useState(false) // 월 점프 드롭다운
   const [filter, setFilter] = useState('')
+  // 지난 달 기록 고치기 — 그때 잘못 입력한 금액을 나중에 바로잡을 수 있게
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState<Record<string, number>>({}) // 자산id → 고친 금액(그 자산의 통화 기준)
+  const [supDraft, setSupDraft] = useState<Record<string, number>>({}) // 받은돈id → 고친 금액(매달=월금액, 일시금=총액)
+  useEffect(() => { setEditing(false); setDraft({}); setSupDraft({}) }, [month, open])
   useEffect(() => { if (open) { setMonth(past[0]?.month ?? ''); setPickerOpen(false) } }, [open, past.length]) // eslint-disable-line react-hooks/exhaustive-deps
   // 좌우 화살표로 저장된 달 사이 이동 (past는 최신 먼저 정렬). ‹=더 과거, ›=최신 방향
   const idx = past.findIndex((s) => s.month === month)
@@ -409,14 +414,40 @@ function SnapshotModal({ open, onClose, profileId }: { open: boolean; onClose: (
   const snap = past.find((s) => s.month === month)
   const jumpList = past.filter((s) => !filter.trim() || monthKo(s.month).includes(filter.trim()) || s.month.includes(filter.trim()))
 
-  const items = (snap?.assets ?? []).filter(countsToTotal)
+  // 고치는 중이면 고친 금액을 반영해서 계산
+  const withDraft = (a: Asset): Asset => (draft[a.id] != null ? { ...a, amount: draft[a.id] } : a)
+  const items = (snap?.assets ?? []).filter(countsToTotal).map(withDraft)
   const total = items.reduce((s, a) => s + krwValue(a), 0)
+  // 받은 돈도 '그 달 기준'으로 계산 (안 그러면 7월 기록인데 이번 달까지 받은 걸로 잡힘)
+  const withSupDraft = (s: Support): Support => (supDraft[s.id] != null
+    ? { ...s, ...(s.kind === 'monthly' ? { monthlyAmount: supDraft[s.id] } : { amount: supDraft[s.id] }) }
+    : s)
+  const supports = (snap?.supports ?? []).map(withSupDraft)
+  const received = supports.reduce((s, x) => s + supportTotal(x, snap?.month), 0)
+  const repayable = repayableTotal(supports, items, snap?.month)
+  const netWorth = total - repayable // 고친 값 기준 '내 돈만'
   const groups = DGROUPS
     .map((g) => {
       const gi = items.filter((a) => dgroupOf(a) === g.key).sort((a, b) => krwValue(b) - krwValue(a))
       return { ...g, items: gi, sum: gi.reduce((s, a) => s + krwValue(a), 0) }
     })
     .filter((g) => g.items.length > 0)
+
+  /** 고친 금액을 그 달 기록에 저장 */
+  async function saveEdits() {
+    if (!snap) return
+    const assets = snap.assets.map(withDraft)
+    const sups = (snap.supports ?? []).map(withSupDraft)
+    const t = assets.filter(countsToTotal).reduce((s, a) => s + krwValue(a), 0)
+    await repo.upsertAssetSnapshot({ ...snap, assets, supports: sups, netWorth: t - repayableTotal(sups, assets.filter(countsToTotal), snap.month) })
+    setEditing(false); setDraft({}); setSupDraft({})
+  }
+
+  async function removeSnap() {
+    if (!snap || !confirm(`${monthKo(snap.month)} 기록을 지울까요?`)) return
+    await repo.deleteAssetSnapshot(snap.id)
+    setEditing(false); setDraft({}); setMonth('')
+  }
 
   return (
     <Modal open={open} onClose={onClose} title="지난 달 자산 보기">
@@ -454,7 +485,20 @@ function SnapshotModal({ open, onClose, profileId }: { open: boolean; onClose: (
               <div className="bg-canvas rounded-xl px-3.5 py-3 mb-3">
                 <div className="text-[11px] text-sub">{monthKo(snap.month)} 총자산 <span className="text-sub/70">· {snap.updatedAt.slice(5, 10).replace('-', '/')} 마지막 저장 기준</span></div>
                 <div className="text-[19px] font-extrabold tnum">₩{won(total)}</div>
-                <div className="text-[12px] text-mint-d font-semibold mt-0.5">내 돈만 ₩{won(snap.netWorth)}</div>
+                <div className="text-[12px] text-mint-d font-semibold mt-0.5">내 돈만 ₩{won(editing ? netWorth : snap.netWorth)}</div>
+              </div>
+
+              {/* 고치기 / 저장 */}
+              <div className="flex items-center gap-2 mb-3">
+                {editing ? (
+                  <>
+                    <Button onClick={saveEdits}>저장</Button>
+                    <Button variant="line" onClick={() => { setEditing(false); setDraft({}) }}>취소</Button>
+                    <button onClick={removeSnap} className="ml-auto text-[12px] font-bold text-expense px-2 py-1.5">이 달 기록 삭제</button>
+                  </>
+                ) : (
+                  <button onClick={() => setEditing(true)} className="text-[12px] font-bold text-sub border border-line rounded-lg px-3 py-1.5 hover:bg-canvas">금액 고치기</button>
+                )}
               </div>
 
               {groups.map((g) => (
@@ -469,11 +513,54 @@ function SnapshotModal({ open, onClose, profileId }: { open: boolean; onClose: (
                         <span className="text-[13px] font-semibold truncate">{a.name}</span>
                         {a.institution && <span className="text-[11px] text-sub ml-1.5">{a.institution}</span>}
                       </div>
-                      <span className="text-[13px] font-bold tnum shrink-0">₩{won(krwValue(a))}</span>
+                      {editing ? (
+                        <div className="shrink-0 w-[150px] flex items-center gap-1">
+                          <AmountInput value={a.amount ?? 0} onChange={(v) => setDraft((d) => ({ ...d, [a.id]: v ?? 0 }))} />
+                          {a.currency && a.currency !== 'KRW' && <span className="text-[11px] text-sub">{a.currency}</span>}
+                        </div>
+                      ) : (
+                        <span className="text-[13px] font-bold tnum shrink-0">₩{won(krwValue(a))}</span>
+                      )}
                     </div>
                   ))}
                 </div>
               ))}
+
+              {/* 가족에게 받은 돈 — 그 달 기준 (‘내 돈만’ 계산에 쓰인 값) */}
+              {supports.length > 0 && (
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-1">
+                    <span className="text-[12.5px] font-bold">👨‍👩‍👧 가족에게 받은 돈</span>
+                    <span className="text-[12px] font-bold tnum text-sub">₩{won(received)}</span>
+                  </div>
+                  {supports.map((s) => (
+                    <div key={s.id} className="flex items-center justify-between py-1.5 border-b border-line last:border-0">
+                      <div className="min-w-0 pr-2">
+                        <span className="text-[13px] font-semibold truncate">{s.label}</span>
+                        {s.repay && <span className="text-[10px] font-bold text-[#b7791f] bg-[#fdf6e3] px-1.5 py-0.5 rounded ml-1.5">돌려줄 돈</span>}
+                        {s.kind === 'monthly' && (
+                          <div className="text-[11px] text-sub">월 ₩{won(s.monthlyAmount || 0)} × {supportMonths(s, snap.month)}회차</div>
+                        )}
+                      </div>
+                      {editing ? (
+                        <div className="shrink-0 w-[150px]">
+                          <AmountInput
+                            value={(s.kind === 'monthly' ? s.monthlyAmount : s.amount) ?? 0}
+                            onChange={(v) => setSupDraft((d) => ({ ...d, [s.id]: v ?? 0 }))}
+                            placeholder={s.kind === 'monthly' ? '월 금액' : '금액'}
+                          />
+                        </div>
+                      ) : (
+                        <span className="text-[13px] font-bold tnum shrink-0">₩{won(supportTotal(s, snap.month))}</span>
+                      )}
+                    </div>
+                  ))}
+                  {repayable > 0 && (
+                    <div className="text-[11px] text-sub mt-1">그중 돌려줄 돈 ₩{won(repayable)} — ‘내 돈만’에서 제외</div>
+                  )}
+                </div>
+              )}
+
               <div className="text-[11px] text-sub mt-1 leading-relaxed">💡 값은 저장 시점으로 고정돼 있어요(당시 시세·환율 기준).</div>
             </>
           )}
@@ -910,11 +997,11 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
         </Field>
       )}
 
-      {/* 검색이 안 되는 펀드·종목은 직접 입력 (시세연동 없이 평가액 수동) */}
-      {sub.live === 'stock' && (
+      {/* 검색이 안 되는 펀드·종목·코인은 직접 입력 (시세연동 없이 평가액 수동) */}
+      {(sub.live === 'stock' || sub.live === 'coin') && (
         <label className="flex items-center gap-2 text-[12.5px] text-sub -mt-1 mb-2 cursor-pointer">
-          <input type="checkbox" checked={manual} onChange={(e) => { const on = e.target.checked; setManual(on); if (on) { setTicker(''); setLivePrice(null); setQ(''); if (market === 'us') setCurrency('USD') } }} />
-          검색이 안 되는 펀드·종목이에요 (이름·평가액 직접 입력)
+          <input type="checkbox" checked={manual} onChange={(e) => { const on = e.target.checked; setManual(on); if (on) { setTicker(''); setLivePrice(null); setQ(''); if (sub.live === 'stock' && market === 'us') setCurrency('USD') } }} />
+          {sub.live === 'coin' ? '검색이 안 되는 코인이에요 (이름·평가액 직접 입력)' : '검색이 안 되는 펀드·종목이에요 (이름·평가액 직접 입력)'}
         </label>
       )}
 
@@ -1014,7 +1101,7 @@ function AssetModal({ open, onClose, edit, profileId, onSaved }: { open: boolean
               <div className="text-[12px] text-sub bg-mint-l/40 rounded-lg px-3 py-2 mb-2">
                 {priceUnavailable
                   ? <>ℹ️ ‘{ticker}’ 현재가를 자동으로 불러올 수 없어요. <b className="text-ink">원금·평가금액을 직접 넣으면</b> 그대로 반영하고 <b className="text-ink">수동</b> 표시를 달아둘게요.</>
-                  : <>✍️ 직접 입력 모드 — 시세 자동연동 없이 원금·평가금액을 직접 넣어요 (펀드 등). <b className="text-ink">수동</b>으로 표시돼요.</>}
+                  : <>✍️ 직접 입력 모드 — 시세 자동연동 없이 원금·평가금액을 직접 넣어요 ({sub.live === 'coin' ? '검색 안 되는 코인 등' : '펀드 등'}). <b className="text-ink">수동</b>으로 표시돼요.</>}
               </div>
               <Field label="통화">
                 <select value={currency} onChange={(e) => setCurrency(e.target.value)} className={inputCls}>
