@@ -7,6 +7,7 @@ import { won, compact, thisMonth, monthLabel, addMonth, addDays, todayISO } from
 import { holidayInfo } from '../lib/holidays'
 import { SCH_COLORS, colorOf } from '../lib/colors'
 import { useIcalEvents } from '../hooks/useIcalEvents'
+import { useApplyEvents } from '../hooks/useApplyEvents'
 import type { ExtEvent } from '../lib/ical'
 import { PageHeader, Button, Modal, Field, inputCls, Fab } from '../components/ui'
 import TimeInput from '../components/TimeInput'
@@ -47,7 +48,20 @@ export default function Calendar() {
   const [dayModal, setDayModal] = useState<string | null>(null)
   const [subsModal, setSubsModal] = useState(false)
   const [search, setSearch] = useState('')
-  const extEvents = useIcalEvents(profile?.calSubs, month)
+  const icalEvents = useIcalEvents(profile?.calSubs, month)
+  // 청약 일정도 캘린더에 함께 표시 (청약 메뉴를 숨긴 프로필에서는 제외)
+  const applyEvents = useApplyEvents(
+    profile?.applyRegions,
+    month,
+    !(profile?.hiddenMenus ?? []).includes('subscription'),
+  )
+  const extEvents = useMemo(() => {
+    const out: Record<string, ExtEvent[]> = {}
+    for (const src of [icalEvents, applyEvents]) {
+      for (const [d, evs] of Object.entries(src)) (out[d] ??= []).push(...evs)
+    }
+    return out
+  }, [icalEvents, applyEvents])
 
   const txs = useLiveQuery(() => (profileId ? repo.listTransactions(profileId, { month }) : []), [profileId, month], [])
   const schedules = useLiveQuery(() => (profileId ? repo.listSchedules(profileId) : []), [profileId], [])
@@ -334,6 +348,10 @@ const REPEATS: [RepeatKind, string][] = [
 ]
 type Scope = 'single' | 'future' | 'all'
 
+/** 두 날짜의 차이(일). 반복 회차를 옮길 때 얼마나 밀렸는지 계산용 */
+const dayShift = (from: string, to: string) =>
+  Math.round((new Date(to + 'T00:00').getTime() - new Date(from + 'T00:00').getTime()) / 86400000)
+
 function ScheduleModal({
   open, onClose, edit, occDate, date, profileId,
 }: {
@@ -353,6 +371,9 @@ function ScheduleModal({
   const [scope, setScope] = useState<Scope>('single')
 
   const isRepeating = !!edit && (edit.repeat ?? 'none') !== 'none'
+
+  // 적용 범위를 바꾸면 날짜는 다시 '선택한 회차'로 초기화(직전 범위에서 옮겨둔 값이 따라오지 않게)
+  useEffect(() => { if (open && isRepeating) setD(occDate) }, [scope])
 
   useEffect(() => {
     if (!open) return
@@ -376,6 +397,16 @@ function ScheduleModal({
   })
   const ru = () => (repeat !== 'none' && repeatUntil ? repeatUntil : undefined)
 
+  /** 반복 회차 날짜 이동. 매주 반복이고 요일을 1개만 쓰던 경우엔 그 요일도 함께 옮긴다 */
+  function moveDate(next: string) {
+    if (!next) return
+    const prevDay = new Date(d + 'T00:00').getDay()
+    if (repeat === 'weekly' && weekdays.length === 1 && weekdays[0] === prevDay) {
+      setWeekdays([new Date(next + 'T00:00').getDay()])
+    }
+    setD(next)
+  }
+
   async function save() {
     if (!title.trim()) return
     const now = new Date().toISOString()
@@ -386,13 +417,16 @@ function ScheduleModal({
     } else if (scope === 'all') {
       await repo.upsertSchedule({ ...edit, ...base(), repeat, repeatUntil: ru() })
     } else if (scope === 'future') {
+      // 이 회차부터 새 시리즈로 분리. 날짜를 옮겼으면 이후 회차가 통째로 그만큼 이동한다.
+      const shift = dayShift(occDate, d)
       await repo.upsertSchedule({ ...edit, repeatUntil: addDays(occDate, -1) })
-      // 새 시리즈는 기존의 '이 회차만' 예외(occDate 이후)를 이어받아 중복 생성 방지
-      await repo.upsertSchedule({ id: uid(), date: occDate, repeat, repeatUntil: ru(), exceptions: (edit.exceptions ?? []).filter((e) => e >= occDate), createdAt: now, ...base() })
+      // 기존의 '이 회차만' 예외(occDate 이후)를 이어받아 중복 생성 방지 — 옮긴 만큼 같이 밀어준다
+      const kept = (edit.exceptions ?? []).filter((e) => e >= occDate).map((e) => (shift ? addDays(e, shift) : e))
+      await repo.upsertSchedule({ id: uid(), date: d, repeat, repeatUntil: ru(), exceptions: kept, createdAt: now, ...base() })
     } else {
-      // single: 해당 회차만 예외 처리 + 단일 일정 생성
+      // single: 원래 회차는 건너뛰고(예외 처리), 고른 날짜에 단독 일정을 만든다 (다른 날로 옮길 수 있음)
       await repo.upsertSchedule({ ...edit, exceptions: [...(edit.exceptions ?? []), occDate] })
-      await repo.upsertSchedule({ id: uid(), date: occDate, repeat: 'none', createdAt: now, ...base() })
+      await repo.upsertSchedule({ id: uid(), date: d, repeat: 'none', createdAt: now, ...base() })
     }
     onClose()
   }
@@ -425,13 +459,26 @@ function ScheduleModal({
       <div className="grid grid-cols-2 gap-3">
         {(!isRepeating) ? (
           <Field label={period ? '시작일' : '날짜'}><input type="date" min="2000-01-01" max="2100-12-31" value={d} onChange={(e) => setD(e.target.value)} className={inputCls} /></Field>
-        ) : (
+        ) : scope === 'all' ? (
+          /* 전체 수정은 날짜 고정 — 시작일을 바꾸면 이미 지나간 회차 표시까지 옮겨지므로 */
           <Field label="선택한 날짜"><div className={inputCls + ' bg-canvas text-sub'}>{occDate}</div></Field>
+        ) : (
+          <Field label={scope === 'single' ? '날짜 (이 회차만 이동)' : '날짜 (이 회차부터 이동)'}>
+            <input type="date" min="2000-01-01" max="2100-12-31" value={d} onChange={(e) => moveDate(e.target.value)} className={inputCls} />
+          </Field>
         )}
         {!isRepeating && (
           <Field label="종료일"><input type="date" min={d} max="2100-12-31" value={endDate} onChange={(e) => setEndDate(e.target.value)} className={inputCls} /></Field>
         )}
       </div>
+      {isRepeating && scope === 'all' && (
+        <div className="text-[11.5px] text-sub -mt-1 mb-2">날짜를 옮기려면 <b className="text-ink">이 일정만</b> 또는 <b className="text-ink">이후 전체</b>를 선택하세요.</div>
+      )}
+      {isRepeating && scope !== 'all' && d !== occDate && (
+        <div className="text-[11.5px] text-mint-d bg-mint-l rounded-lg px-2.5 py-1.5 -mt-1 mb-2">
+          {occDate} → <b>{d}</b> 로 {scope === 'single' ? '이 회차만 옮겨요. 다음 회차부터는 원래대로예요.' : '옮기고, 이후 회차도 같이 밀려요.'}
+        </div>
+      )}
       <label className="flex items-center gap-2 text-[12.5px] text-sub -mt-1 mb-2 cursor-pointer">
         <input type="checkbox" checked={allDay} onChange={(e) => { setAllDay(e.target.checked); if (e.target.checked) { setTime(''); setEndTime('') } }} /> 종일
       </label>
